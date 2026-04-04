@@ -577,12 +577,12 @@ if ta.crossunder(fast, slow)
         <div class="bar-chips">
           <button class="bar-chip" onclick="setMaxBars(1000)">1K</button>
           <button class="bar-chip" onclick="setMaxBars(5000)">5K</button>
-          <button class="bar-chip" onclick="setMaxBars(10000)">10K</button>
+          <button class="bar-chip active" onclick="setMaxBars(10000)">10K</button>
           <button class="bar-chip" onclick="setMaxBars(50000)">50K</button>
-          <button class="bar-chip active" onclick="setMaxBars(0)">All</button>
+          <button class="bar-chip" onclick="setMaxBars(0)">All</button>
           <input type="number" class="bar-custom" id="maxBarsCustom" placeholder="Custom" min="100" step="100" onchange="setMaxBarsCustom(this.value)">
         </div>
-        <input type="hidden" id="maxBars" value="0">
+        <input type="hidden" id="maxBars" value="10000">
       </div>
       <div class="bar-limit-section" style="margin-top:14px;">
         <label onclick="document.getElementById('optSettings').style.display = document.getElementById('optSettings').style.display === 'none' ? 'block' : 'none'" style="cursor:pointer;">
