@@ -620,6 +620,9 @@ if ta.crossunder(fast, slow)
       <button class="btn-run" id="btnRun" onclick="runBacktest()">
         Run Backtest
       </button>
+      <button class="btn-run" id="btnCancel" onclick="cancelBacktest()" style="display:none;background:var(--red);margin-top:6px;">
+        Cancel
+      </button>
       <button class="btn-run" id="btnOptimize" onclick="runOptimization()" style="background:var(--purple);margin-top:8px;">
         Walk-Forward Optimize
       </button>
@@ -1274,7 +1277,11 @@ async function runBacktest() {
 
   btn.disabled = true;
   btn.classList.add('running');
-  btn.innerHTML = '<span class="spinner"></span> Running Backtest...';
+  btn.innerHTML = '<span class="spinner"></span> Running...';
+  // Show cancel button
+  const cancelBtn = document.getElementById('btnCancel');
+  cancelBtn.style.display = 'block';
+  window._backtestAbort = new AbortController();
 
   destroyCharts();
 
@@ -1314,7 +1321,7 @@ async function runBacktest() {
 
   try {
     // Use SSE for streaming progress
-    const resp = await fetch('/api/backtest-stream', { method: 'POST', body: formData });
+    const resp = await fetch('/api/backtest-stream', { method: 'POST', body: formData, signal: window._backtestAbort.signal });
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -1383,11 +1390,23 @@ async function runBacktest() {
     } catch (err2) {
       alert('Error: ' + err2.message + '\n\nMake sure the Flask server is running (python app.py).');
     }
+  } catch (abortErr) {
+    if (abortErr.name === 'AbortError') {
+      progText.textContent = 'Cancelled';
+      progBar.style.background = 'var(--red)';
+    }
   } finally {
     btn.disabled = false;
     btn.classList.remove('running');
     btn.innerHTML = 'Run Backtest';
-    setTimeout(() => { progWrap.style.display = 'none'; }, 2000);
+    document.getElementById('btnCancel').style.display = 'none';
+    setTimeout(() => { progWrap.style.display = 'none'; progBar.style.background = ''; }, 2000);
+  }
+}
+
+function cancelBacktest() {
+  if (window._backtestAbort) {
+    window._backtestAbort.abort();
   }
 }
 
