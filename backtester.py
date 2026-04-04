@@ -107,12 +107,14 @@ class Backtester:
                  smt_data: pd.DataFrame = None,
                  extra_data=None,
                  base_tf: str = 'M5',
-                 utc_offset: int = 0):
+                 utc_offset: int = 0,
+                 date_filters: list = None):
         self.data = data
         self.smt_data = smt_data
         self.extra_data = extra_data or []
         self.base_tf = base_tf
         self.utc_offset = utc_offset
+        self.date_filters = date_filters or []
         self.source = source
         self.engine = engine
         self.initial_capital = initial_capital
@@ -479,11 +481,37 @@ class Backtester:
 
     def get_results(self, interpreter=None):
         _, is_na, _ = _get_create_interpreter(self.engine)
-        metrics = calculate_metrics(
-            self.trades, self.equity_curve, self.drawdown_curve,
-            self.initial_capital, self.data, self._exposure_pct)
 
-        trade_list = [t.to_dict(self.engine) for t in self.trades]
+        # Post-backtest date exclusion filter: remove trades whose entry falls in excluded ranges
+        filtered_trades = self.trades
+        excluded_count = 0
+        if self.date_filters:
+            import pandas as _pd
+            filtered = []
+            for t in self.trades:
+                excluded = False
+                if t.entry_date:
+                    try:
+                        entry_dt = _pd.Timestamp(str(t.entry_date))
+                        for filt in self.date_filters:
+                            f_from = _pd.Timestamp(filt.get('from', ''))
+                            f_to = _pd.Timestamp(filt.get('to', filt.get('from', '')))
+                            f_to = f_to + _pd.Timedelta(days=1) - _pd.Timedelta(seconds=1)
+                            if f_from <= entry_dt <= f_to:
+                                excluded = True; break
+                    except Exception:
+                        pass
+                if not excluded:
+                    filtered.append(t)
+            excluded_count = len(self.trades) - len(filtered)
+            filtered_trades = filtered
+
+        metrics = calculate_metrics(
+            filtered_trades, self.equity_curve, self.drawdown_curve,
+            self.initial_capital, self.data, self._exposure_pct)
+        metrics['excluded_trades'] = excluded_count
+
+        trade_list = [t.to_dict(self.engine) for t in filtered_trades]
 
         equity = self.equity_curve
         drawdown = self.drawdown_curve
@@ -525,17 +553,17 @@ class Backtester:
                 })
 
         markers = []
-        for t in self.trades:
+        for t in filtered_trades:
             markers.append({'type': 'entry', 'direction': t.direction, 'bar': t.entry_bar,
                            'price': t.entry_price, 'date': str(t.entry_date or t.entry_bar)})
             markers.append({'type': 'exit', 'direction': t.direction, 'bar': t.exit_bar,
                            'price': t.exit_price, 'date': str(t.exit_date or t.exit_bar)})
 
         # Monthly returns
-        monthly = _monthly_returns(self.trades, self.initial_capital)
+        monthly = _monthly_returns(filtered_trades, self.initial_capital)
 
         # R-multiple distribution
-        r_multiples = [t.r_multiple for t in self.trades if t.r_multiple != 0]
+        r_multiples = [t.r_multiple for t in filtered_trades if t.r_multiple != 0]
 
         # Underwater equity (consecutive bars in drawdown)
         underwater = _underwater_periods(self.drawdown_curve, dates if len(dates) == len(self.drawdown_curve) else None)

@@ -558,16 +558,17 @@ if ta.crossunder(fast, slow)
           <input type="number" id="utcOffset" value="0" step="1" min="-12" max="14" title="Broker server UTC offset (e.g. 2 for EET, 3 for EEST)">
         </div>
       </div>
-      <div class="bar-limit-section">
-        <label onclick="document.getElementById('dateFilterWrap').style.display = document.getElementById('dateFilterWrap').style.display === 'none' ? 'block' : 'none'" style="cursor:pointer;">
-          Date Exclusion Filter &#9660;
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:12px;">
+        <label onclick="document.getElementById('dateFilterWrap').style.display = document.getElementById('dateFilterWrap').style.display === 'none' ? 'block' : 'none'" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;font-size:12px;font-weight:600;color:var(--text);letter-spacing:0.3px;">
+          <span>&#128197; Date Exclusion Filter</span>
+          <span id="dateFilterArrow" style="font-size:10px;color:var(--text-dim);">&#9660;</span>
         </label>
-        <div id="dateFilterWrap" style="display:none; margin-top:8px;">
-          <p style="font-size:11px;color:var(--text-dim);margin-bottom:6px;">Exclude date ranges or specific dates from the backtest (e.g. holidays, low-liquidity periods).</p>
+        <div id="dateFilterWrap" style="display:none; margin-top:10px;">
+          <p style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">Exclude date ranges or specific dates from the backtest.</p>
           <div id="dateFilters"></div>
           <div style="display:flex;gap:6px;margin-top:6px;">
-            <button onclick="addDateFilter('range')" style="flex:1;background:var(--surface2);color:var(--text-dim);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:11px;cursor:pointer;">+ Date Range</button>
-            <button onclick="addDateFilter('single')" style="flex:1;background:var(--surface2);color:var(--text-dim);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:11px;cursor:pointer;">+ Single Date</button>
+            <button onclick="addDateFilter('range')" style="flex:1;background:var(--bg);color:var(--text-dim);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:11px;cursor:pointer;font-weight:600;">+ Date Range</button>
+            <button onclick="addDateFilter('single')" style="flex:1;background:var(--bg);color:var(--text-dim);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:11px;cursor:pointer;font-weight:600;">+ Single Date</button>
           </div>
         </div>
       </div>
@@ -1021,7 +1022,7 @@ function renderResults(data) {
       <div class="metric-card">
         <div class="label">Total Trades</div>
         <div class="value">${m.total_trades}</div>
-        <div class="sub">${m.winning_trades}W / ${m.losing_trades}L</div>
+        <div class="sub">${m.winning_trades}W / ${m.losing_trades}L${m.excluded_trades ? ' <span style="color:var(--yellow);">(' + m.excluded_trades + ' excluded)</span>' : ''}</div>
       </div>
       <div class="metric-card">
         <div class="label">Win Rate</div>
