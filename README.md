@@ -2,48 +2,93 @@
 
 A web-based backtesting engine that runs **Pine Script v5** and **MQL5 Expert Advisor** strategies against your own OHLCV data. No TradingView or MetaTrader account needed.
 
-## What's New in v3.0
+## Changelog
 
-### Dual-Engine Architecture
-- **Pine Script v5** and **MQL5** interpreters in a single app
-- Toggle between engines with one click in the sidebar
-- Both engines run on **Cython** for ~5x speedup over pure Python
-- Automatic fallback to Python if Cython isn't compiled
+### v3.1 — Multi-Timeframe, Walk-Forward, Accuracy Upgrade
 
-### MQL5 Expert Advisor Support
-- Full MQL5 tokenizer, parser, and tree-walking interpreter (~2000 lines)
-- Supports `OnInit()` / `OnTick()` / `OnDeinit()` lifecycle
-- **CTrade class**: `Buy()`, `Sell()`, `PositionClose()`, `PositionModify()`
-- **Indicator handles**: `iMA`, `iRSI`, `iMACD`, `iATR`, `iBands`, `iStochastic` + `CopyBuffer`
-- **Position queries**: `PositionSelect()`, `PositionGetDouble()`, `PositionGetInteger()`
-- **Multi-timeframe**: `iHigh/iLow/iClose` with timeframe aggregation from base data
-- **Session detection**: `TimeToStruct()` with real timestamps, killzone filtering
-- `input` variables, `#define` constants, `enum` declarations, C-style control flow
-- Preprocessor: `#include <Trade/Trade.mqh>` enables CTrade automatically
+**Multi-Timeframe Support**
+- Select your base timeframe (1m to 1M) when uploading CSV data
+- The engine auto-aggregates higher timeframe candles (H1, H4, D1, W1) from the base data using real timestamp boundaries
+- Pine Script: `request.security(syminfo.tickerid, "240", high)` returns proper H4 high
+- MQL5: `iHigh(_Symbol, PERIOD_H4, 1)` returns previous H4 candle high
+- No more manual ratio-based approximation — real OHLC aggregation
 
-### Platform-Level SMT Divergence
-- Upload a second CSV for any correlated symbol
-- The platform automatically detects swing high/low divergence between both symbols
-- **No SMT code needed in your strategy** -- any script can use it
-- Variables injected per bar: `_smt_bull_active`, `_smt_bear_active`, `_smt_available`
-- Works identically on both Pine Script and MQL5 engines
+**Walk-Forward Optimization**
+- Rolling train/test window parameter sweep
+- Configure train size, test size, step, and optimization metric (Sharpe, PF, Net Profit, Win Rate)
+- Define parameter ranges via JSON: `[{"name":"length","start":5,"end":50,"step":5}]`
+- Results table shows per-window best params + out-of-sample performance
 
-### JPY Pair Support
-- Auto-detects JPY pairs from price levels (>10)
-- P&L automatically converted from JPY to USD
-- Correct lot sizing with contract size normalization
+**Accuracy Improvements**
+- **Spread simulation** — configurable bid/ask spread in pips. Longs fill at ask, shorts at bid
+- **Slippage modeling** — random 0 to N pips adverse fill on every entry/exit
+- **Commission per lot** — $X per lot per side (in addition to percentage-based commission)
+- **Intra-bar SL/TP priority** — when both stop loss and take profit could hit on the same bar, uses candle direction heuristic to determine which triggered first
+- **R-multiple tracking** — each trade's P&L expressed as a multiple of its initial risk (SL distance)
+
+**Analytics**
+- **Monthly returns table** — P&L, return %, trade count, and win rate per month
+- **R-multiple distribution** — histogram chart of trade results as risk multiples
+- **Exposure time** — percentage of bars with an open position
+- **Drawdown duration** — longest consecutive period in drawdown (bars)
+- **R column in trade log** — see each trade's R-multiple alongside P&L
+
+**Performance**
+- **Vectorized indicators** — NumPy for RSI and ATR calculations
+- **TA memoization** — per-bar cache prevents redundant indicator computation
+- **Lazy series trimming** — series data capped at 500 bars, 200x memory reduction on 100K+ bar backtests
+
+**New Order Types**
+- **Pending limit/stop entries** — Pine: `strategy.entry("L", strategy.long, limit=1.1000)`, MQL5: `BuyLimit`, `SellStop`, etc.
+- **Portfolio mode** — hold multiple positions simultaneously, keyed by trade ID
+
+**Usability**
+- **Progress bar** — real-time SSE streaming shows bar count during long backtests
+- **Auto-save** — script, settings, engine choice, and base timeframe persist in localStorage
+- **Ctrl+Enter** — keyboard shortcut to run backtest
+- **Syntax error line jumping** — "Go to Line X" button that highlights the error in the editor
+- **Metric tooltips** — hover any metric name for a plain-English explanation
+- **CSV export** — download trade log, monthly returns, metrics, or equity curve
+- **Multi-symbol upload** — up to 5 correlation symbol CSVs
+
+### v3.0 — Dual-Engine Architecture
+
+- Added MQL5 Expert Advisor interpreter (tokenizer, parser, tree-walking interpreter)
+- Unified Pine Script + MQL5 in a single app with engine toggle
+- Cython acceleration on both engines (~5x speedup)
+- Platform-level SMT divergence (works with any strategy, no script code needed)
+- JPY pair auto-detection with P&L currency conversion
+
+### v2.0 — Cython Engine
+
+- Cython-optimized Pine Script interpreter (~5x speedup)
+- SMT divergence via `request.security()` with secondary CSV upload
+- Customizable bar count, clearer settings labels
+
+### v1.0 — Initial Release
+
+- Pine Script v5 interpreter with 30+ built-in indicators
+- Flask web UI with candlestick charts, equity curve, drawdown, trade log
+- Full strategy support: `strategy.entry/exit/close` with SL/TP
 
 ## Features
 
-- **Two interpreters** -- Pine Script v5 and MQL5 Expert Advisors
-- **Cython acceleration** -- ~5x speedup on both engines
-- **Full strategy support** -- entry, exit, close, stop-loss, take-profit
-- **30+ built-in indicators** -- SMA, EMA, RSI, ATR, MACD, Bollinger Bands, Stochastic, pivot highs/lows, crossover/crossunder
-- **SMT Divergence** -- platform-level, works with any strategy
-- **Interactive charts** -- candlestick chart with trade markers, equity curve, drawdown
-- **40+ metrics** -- win rate, profit factor, Sharpe, Sortino, Calmar, max drawdown, MAE/MFE
-- **Configurable** -- starting balance, commission, lot size, bar count
-- **One-click launch** -- `start.bat` builds Cython and opens browser
+- **Two interpreters** — Pine Script v5 and MQL5 Expert Advisors
+- **Multi-timeframe** — select base TF, auto-aggregates H1/H4/D1/W1 candles from base data
+- **Cython acceleration** — ~5x speedup on both engines
+- **Walk-forward optimization** — rolling train/test parameter sweep
+- **Spread + slippage + commission** — realistic execution modeling
+- **Portfolio mode** — multiple simultaneous positions
+- **Pending orders** — limit and stop entry orders
+- **Platform SMT divergence** — works with any strategy
+- **30+ built-in indicators** — SMA, EMA, RSI, ATR, MACD, BB, Stochastic, pivots, crossover
+- **45+ metrics** — Sharpe, Sortino, Calmar, R-multiples, MAE/MFE, exposure, DD duration
+- **Monthly returns** — P&L breakdown by month with win rate
+- **Interactive charts** — candlestick with trade markers, equity, drawdown, P&L distribution, R-multiple histogram
+- **CSV export** — download trades, metrics, monthly returns, equity curve
+- **Auto-save** — scripts and settings persist across refreshes
+- **Progress bar** — real-time bar count during long backtests
+- **One-click launch** — `start.bat` builds Cython and opens browser
 
 ## Quick Start
 
@@ -74,18 +119,19 @@ python setup.py build_ext --inplace
 python app.py
 ```
 
-Or double-click **`start.bat`** (Windows) -- builds Cython automatically and opens the browser.
+Or double-click **`start.bat`** (Windows) — builds Cython automatically and opens the browser.
 
 Open **http://localhost:1234** in your browser.
 
 ### 5. Use it
 
-1. **Select Engine** -- click "Pine Script" or "MQL5" in the sidebar
-2. **Upload CSV** -- drop your MetaTrader/TradingView OHLCV export
-3. **Paste Strategy** -- enter your Pine Script or MQL5 EA code
-4. **(Optional) SMT Data** -- upload a second CSV for divergence detection
-5. **Configure** -- set balance, commission, lot size, bar count
-6. **Run Backtest** -- click the button and view results
+1. **Select Engine** — click "Pine Script" or "MQL5" in the sidebar
+2. **Upload CSV** — drop your MetaTrader/TradingView OHLCV export
+3. **Select Timeframe** — choose the base timeframe of your data (M5, H1, etc.)
+4. **Paste Strategy** — enter your Pine Script or MQL5 EA code
+5. **(Optional) SMT Data** — upload a second CSV for divergence detection
+6. **Configure** — set balance, commission, spread, slippage, lot size, bar count
+7. **Run Backtest** — click the button (or Ctrl+Enter) and view results
 
 ## CSV Format
 
@@ -109,7 +155,7 @@ datetime,open,high,low,close,volume
 | Feature | Status |
 |---------|--------|
 | `strategy()` config | Supported |
-| `strategy.entry/exit/close` | Supported |
+| `strategy.entry/exit/close` with limit/stop | Supported |
 | `input.int/float/bool/string` | Supported |
 | `if/else`, `for`, `switch`, ternary | Supported |
 | User-defined functions | Supported |
@@ -119,15 +165,16 @@ datetime,open,high,low,close,volume
 | `ta.crossover/crossunder` | Supported |
 | `ta.highest/lowest/change/stoch` | Supported |
 | `ta.pivothigh/pivotlow` | Supported |
-| `request.security()` (SMT) | Supported |
+| `request.security()` (multi-timeframe + SMT) | Supported |
 | `math.*`, `array.*`, `str.*` | Supported |
+| Platform SMT: `_smt_bull_active`, `_smt_bear_active` | Supported |
 | Visual functions (plot, label, line) | Parsed (no-op) |
 
 ### MQL5 Expert Advisors
 | Feature | Status |
 |---------|--------|
 | `OnInit/OnTick/OnDeinit` | Supported |
-| `CTrade` (Buy/Sell/Close/Modify) | Supported |
+| `CTrade` (Buy/Sell/Close/Modify/BuyLimit/SellStop) | Supported |
 | `iMA/iRSI/iMACD/iATR/iBands/iStoch` | Supported |
 | `CopyBuffer` | Supported |
 | `PositionSelect/Get` queries | Supported |
@@ -138,61 +185,62 @@ datetime,open,high,low,close,volume
 | `ArrayResize/Copy/SetAsSeries` | Supported |
 | `SymbolInfoDouble/Integer/String` | Supported |
 | `TimeToStruct` (real timestamps) | Supported |
-| Multi-timeframe `iHigh/iLow` | Supported (aggregated from base TF) |
+| Multi-timeframe `iHigh/iLow` via MTF engine | Supported |
 | `MathSqrt/Abs/Max/Min/Pow/Log` | Supported |
 | `StringFormat/Len/Find/Substr` | Supported |
 | `NormalizeDouble`, type casting | Supported |
+| Platform SMT: `_smt_bull_active`, `_smt_bear_active` | Supported |
 
 ## Project Structure
 
 ```
 baktest/
-  app.py               # Flask web server (unified, port 1234)
-  backtester.py         # Trade execution engine (dual-engine)
-  pine_parser.py        # Pine Script tokenizer, parser, interpreter
+  app.py               # Flask web server (port 1234)
+  backtester.py         # Trade execution engine (dual-engine, portfolio, pending orders)
+  pine_parser.py        # Pine Script v5 tokenizer, parser, interpreter
   pine_fast.pyx         # Cython Pine Script interpreter (~5x faster)
   mql5_parser.py        # MQL5 tokenizer, parser, interpreter
   mql5_fast.pyx         # Cython MQL5 interpreter (~5x faster)
+  mtf_engine.py         # Multi-timeframe aggregation engine
   smt_engine.py         # Platform-level SMT divergence detection
   setup.py              # Cython build script (both engines)
   start.bat             # One-click Windows launcher
   requirements.txt      # Python dependencies
   templates/
-    index.html          # Web UI (single-page app with engine toggle)
+    index.html          # Web UI (SPA with engine toggle, MTF, charts, analytics)
   test/
-    SMC_Framework_v5.11_Strategy.pine   # Test Pine Script strategy
-    SMC_Framework_v511.mq5              # Test MQL5 EA (same strategy)
+    SMC_Framework_v5.11_Strategy.pine
+    SMC_Framework_v511.mq5
   examples/
-    sample_ea.mq5       # Simple MA crossover MQL5 EA
+    sample_ea.mq5
 ```
 
 ## Limitations
 
-- **No multi-timeframe data** -- both engines use a single CSV for price data. Multi-timeframe indicators (e.g., `iHigh` with H4 on M5 data) are simulated by aggregating base timeframe bars, which may not perfectly match real HTF candles
-- **No tick data** -- backtests run bar-by-bar on OHLCV data, not tick-by-tick. Intra-bar price movement is approximated
-- **No spread simulation** -- Bid/Ask spread is not modeled; entries and exits use the close price
-- **No slippage** -- orders fill at exact prices (stop/limit levels or bar close)
-- **No pyramiding** -- only one position open at a time per direction
-- **Pine Script subset** -- not all Pine Script v5 features are supported (e.g., `ta.valuewhen`, `ta.barssince`, drawing objects are no-ops)
-- **MQL5 subset** -- no struct/class definitions, no custom indicators (`iCustom` is a stub), no order book, no pending orders (limit/stop orders are SL/TP only)
-- **Session detection** -- MQL5 session functions use synthetic timestamps derived from CSV datetime columns; may not perfectly match real broker server times
-- **Performance** -- complex strategies on 50K+ bars can take 1-2 minutes even with Cython. The interpreter is tree-walking, not compiled
+- **Bar-by-bar execution** — backtests run on OHLCV candles, not tick-by-tick. Intra-bar price paths are approximated with a candle direction heuristic
+- **Pine Script subset** — not all v5 features are supported (e.g., `ta.valuewhen`, `ta.barssince`, drawing objects are no-ops)
+- **MQL5 subset** — no struct/class definitions, no custom indicators (`iCustom` is a stub), no order book
+- **MTF approximation** — higher timeframe candles are aggregated from base data. Weekend gaps, session breaks, and market holidays may cause minor differences vs real broker HTF candles
+- **Session detection** — MQL5 `TimeToStruct` uses real timestamps from CSV datetime columns but may not perfectly match broker server timezone
+- **Performance** — complex strategies (e.g., SMC Framework with 1500 lines) on 50K+ bars take 1-2 minutes even with Cython. The interpreter is tree-walking, not compiled to native code
+- **Single CSV per symbol** — each symbol requires a separate CSV upload. No API-based data fetching
 
 ## Roadmap
 
-- [ ] **Progress bar** -- show bar count progress during long backtests
-- [ ] **Auto-save scripts** -- persist strategy code in localStorage across refreshes
-- [ ] **Syntax error highlighting** -- point to the exact line with the error
-- [ ] **Ctrl+Enter to run** -- keyboard shortcut for running backtests
-- [ ] **Export results** -- download trade list and equity curve as CSV
-- [ ] **Metric tooltips** -- hover explanations for Sharpe, Sortino, profit factor
-- [ ] **Vectorized indicators** -- use numpy for SMA/EMA/RSI instead of per-bar loops
-- [ ] **TA memoization** -- cache repeated indicator calls with same parameters
-- [ ] **Lazy series trimming** -- free memory for old bars beyond max lookback
-- [ ] **Walk-forward optimization** -- split data into train/test windows
-- [ ] **Multi-symbol support** -- backtest across multiple instruments simultaneously
-- [ ] **Pending order types** -- buy/sell limit and stop orders (not just SL/TP)
-- [ ] **Portfolio mode** -- track multiple positions across different strategies
+- [ ] **Monte Carlo simulation** — randomize trade order 1000x to show range of possible equity curves and probability of ruin
+- [ ] **Parameter heatmap** — visual 2D heatmap of optimization results for two-parameter sweeps
+- [ ] **Rolling Sharpe chart** — plot Sharpe ratio over a rolling window to see when the strategy works vs. doesn't
+- [ ] **Trade duration histogram** — distribution of holding periods, winners vs. losers by duration
+- [ ] **Underwater equity chart** — visual timeline of drawdown periods with recovery time
+- [ ] **Compare runs** — save multiple backtest results and overlay equity curves side-by-side
+- [ ] **Dark/light theme toggle** — CSS variable system already supports it, just needs a switch
+- [ ] **Drag-resize panels** — let users resize the sidebar and chart areas
+- [ ] **API data fetching** — pull OHLCV data directly from brokers (MT5 API, TradingView, OANDA)
+- [ ] **Strategy templates** — pre-built strategies (MA crossover, RSI mean reversion, breakout) selectable from a dropdown
+- [ ] **Proper Wilder's ATR/RSI** — use exponential smoothing instead of simple average for more accurate indicator values
+- [ ] **Correlation matrix** — show how correlated returns are when running multiple strategies
+- [ ] **Risk of ruin calculator** — given win rate, risk per trade, and payoff ratio, estimate probability of account blowup
+- [ ] **WebSocket live mode** — connect to a live data feed and run strategies in real-time (paper trading)
 
 ## License
 
