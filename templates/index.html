@@ -559,6 +559,19 @@ if ta.crossunder(fast, slow)
         </div>
       </div>
       <div class="bar-limit-section">
+        <label onclick="document.getElementById('dateFilterWrap').style.display = document.getElementById('dateFilterWrap').style.display === 'none' ? 'block' : 'none'" style="cursor:pointer;">
+          Date Exclusion Filter &#9660;
+        </label>
+        <div id="dateFilterWrap" style="display:none; margin-top:8px;">
+          <p style="font-size:11px;color:var(--text-dim);margin-bottom:6px;">Exclude date ranges or specific dates from the backtest (e.g. holidays, low-liquidity periods).</p>
+          <div id="dateFilters"></div>
+          <div style="display:flex;gap:6px;margin-top:6px;">
+            <button onclick="addDateFilter('range')" style="flex:1;background:var(--surface2);color:var(--text-dim);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:11px;cursor:pointer;">+ Date Range</button>
+            <button onclick="addDateFilter('single')" style="flex:1;background:var(--surface2);color:var(--text-dim);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:11px;cursor:pointer;">+ Single Date</button>
+          </div>
+        </div>
+      </div>
+      <div class="bar-limit-section">
         <label>Bars to Backtest</label>
         <div class="bar-chips">
           <button class="bar-chip" onclick="setMaxBars(1000)">1K</button>
@@ -1269,6 +1282,7 @@ async function runBacktest() {
   formData.append('script', script);
   formData.append('engine', currentEngine);
   formData.append('base_tf', currentBaseTF);
+  formData.append('date_filters', JSON.stringify(getDateFilters()));
   formData.append('initial_capital', document.getElementById('initialCapital').value);
   formData.append('commission', document.getElementById('commission').value);
   formData.append('commission_per_lot', document.getElementById('commissionPerLot').value);
@@ -1417,6 +1431,73 @@ void OnTick() {
 }
 `;
 
+// ── Date Exclusion Filter ──
+let dateFilterId = 0;
+function addDateFilter(type) {
+  dateFilterId++;
+  const id = dateFilterId;
+  const div = document.createElement('div');
+  div.id = 'df_' + id;
+  div.style.cssText = 'display:flex;gap:4px;align-items:center;margin-bottom:4px;';
+  const inputStyle = 'background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);padding:4px 6px;font-size:11px;font-family:inherit;';
+  if (type === 'range') {
+    div.innerHTML = `
+      <input type="date" class="df-from" style="${inputStyle}flex:1;" title="From date">
+      <span style="color:var(--text-dim);font-size:11px;">to</span>
+      <input type="date" class="df-to" style="${inputStyle}flex:1;" title="To date">
+      <button onclick="document.getElementById('df_${id}').remove();saveDateFilters();" style="background:var(--red-dim);color:var(--red);border:1px solid var(--red);border-radius:4px;padding:2px 6px;cursor:pointer;font-size:10px;">x</button>
+    `;
+  } else {
+    div.innerHTML = `
+      <input type="date" class="df-from" style="${inputStyle}flex:1;" title="Date to exclude">
+      <span style="color:var(--text-dim);font-size:11px;width:20px;text-align:center;">-</span>
+      <span style="flex:1;"></span>
+      <button onclick="document.getElementById('df_${id}').remove();saveDateFilters();" style="background:var(--red-dim);color:var(--red);border:1px solid var(--red);border-radius:4px;padding:2px 6px;cursor:pointer;font-size:10px;">x</button>
+    `;
+  }
+  document.getElementById('dateFilters').appendChild(div);
+  // Save on change
+  div.querySelectorAll('input').forEach(inp => inp.addEventListener('change', saveDateFilters));
+}
+
+function getDateFilters() {
+  const filters = [];
+  document.querySelectorAll('#dateFilters > div').forEach(div => {
+    const from = div.querySelector('.df-from')?.value;
+    const to = div.querySelector('.df-to')?.value;
+    if (from) {
+      filters.push({ from: from, to: to || from });
+    }
+  });
+  return filters;
+}
+
+function saveDateFilters() {
+  localStorage.setItem('_bt_dateFilters', JSON.stringify(getDateFilters()));
+}
+
+// Restore saved date filters
+(function() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('_bt_dateFilters') || '[]');
+    saved.forEach(f => {
+      if (f.from === f.to) {
+        addDateFilter('single');
+      } else {
+        addDateFilter('range');
+      }
+      const divs = document.querySelectorAll('#dateFilters > div');
+      const last = divs[divs.length - 1];
+      if (last) {
+        const fromInp = last.querySelector('.df-from');
+        const toInp = last.querySelector('.df-to');
+        if (fromInp) fromInp.value = f.from;
+        if (toInp) toInp.value = f.to;
+      }
+    });
+  } catch(e) {}
+})();
+
 let currentBaseTF = 'M5';
 function setBaseTF(tf) {
   currentBaseTF = tf;
@@ -1529,6 +1610,7 @@ async function runOptimization() {
   formData.append('script', script);
   formData.append('engine', currentEngine);
   formData.append('base_tf', currentBaseTF);
+  formData.append('date_filters', JSON.stringify(getDateFilters()));
   formData.append('initial_capital', document.getElementById('initialCapital').value);
   formData.append('commission', document.getElementById('commission').value);
   formData.append('default_qty', document.getElementById('defaultQty').value);

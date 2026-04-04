@@ -152,6 +152,25 @@ def _setup_backtest():
 
     if max_bars > 0 and len(df) > max_bars:
         df = df.tail(max_bars).reset_index(drop=True)
+
+    # Apply date exclusion filters
+    date_filters = json.loads(request.form.get('date_filters', '[]'))
+    if date_filters:
+        dt_col = None
+        for c in ('datetime', 'date', 'Date', 'Datetime'):
+            if c in df.columns:
+                dt_col = c; break
+        if dt_col:
+            df_dates = pd.to_datetime(df[dt_col], errors='coerce')
+            mask = pd.Series(True, index=df.index)
+            for filt in date_filters:
+                f_from = pd.Timestamp(filt.get('from', ''))
+                f_to = pd.Timestamp(filt.get('to', filt.get('from', '')))
+                # Set to end of day for the 'to' date so it's inclusive
+                f_to = f_to + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+                mask = mask & ~((df_dates >= f_from) & (df_dates <= f_to))
+            df = df[mask].reset_index(drop=True)
+
     if len(df) < 2:
         raise ValueError('CSV file has insufficient data (need at least 2 bars)')
 
