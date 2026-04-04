@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+
+# Cython build artifacts (keep .pyx source)
+*.c
+*.so
+*.pyd
+*.dll
+
+# Uploads (user data - never commit)
+uploads/
+
+# Logs
+*.log
+server.log
+
+# User CSV data files
+*.csv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Test scripts (may contain user strategy code)
+test_script.pine
+
+# Config
+.claude/
