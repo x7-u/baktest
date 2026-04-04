@@ -748,10 +748,19 @@ cdef class FastPineInterpreter:
             self.variables['_cum_total'] = total
             return total
 
-        # Unimplemented TA stubs
-        if name in ('ta.rising', 'ta.falling', 'ta.valuewhen', 'ta.barssince',
-                     'ta.swma', 'ta.percentrank', 'ta.vwma', 'ta.mom'):
-            return _NA
+        # ── Extended TA functions — delegate to Python module ──
+        if name in ('ta.valuewhen', 'valuewhen', 'ta.barssince', 'barssince',
+                     'ta.highestbars', 'highestbars', 'ta.lowestbars', 'lowestbars',
+                     'ta.rising', 'ta.falling', 'ta.mom', 'mom',
+                     'ta.vwma', 'vwma', 'ta.percentrank', 'ta.swma'):
+            from pine_parser import PineInterpreter as _PI
+            # Create a temporary Python interpreter method call
+            pi = _PI.__new__(_PI)
+            pi.variables = self.variables
+            pi.series_data = self.series_data
+            pi.bar_index = self.bar_index
+            pi._bar_cache = {}
+            return pi._call(node)
 
         # Math
         if fid == 40: return fabs(<double>args[0]) if args and not _is_na(args[0]) else _NA

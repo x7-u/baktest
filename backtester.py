@@ -106,11 +106,13 @@ class Backtester:
                  slippage_pips: float = 0.0,
                  smt_data: pd.DataFrame = None,
                  extra_data=None,
-                 base_tf: str = 'M5'):
+                 base_tf: str = 'M5',
+                 utc_offset: int = 0):
         self.data = data
         self.smt_data = smt_data
         self.extra_data = extra_data or []
         self.base_tf = base_tf
+        self.utc_offset = utc_offset
         self.source = source
         self.engine = engine
         self.initial_capital = initial_capital
@@ -207,8 +209,9 @@ class Backtester:
         # Build multi-timeframe data
         self._mtf = MTFEngine(base_tf=self.base_tf)
         self._mtf.build(self.data)
-        # Expose MTF engine to interpreter via variables dict (works with both Python and Cython)
+        # Expose MTF engine and broker UTC offset to interpreter
         interpreter.variables['__mtf__'] = self._mtf
+        interpreter.variables['__utc_offset__'] = self.utc_offset
 
         config = interpreter.strategy_config
         balance = self.initial_capital

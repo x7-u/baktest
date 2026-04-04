@@ -1793,7 +1793,9 @@ class MQL5Interpreter:
             if timestamp > 0:
                 import datetime as _dt
                 try:
-                    t = _dt.datetime.utcfromtimestamp(timestamp)
+                    # Apply broker UTC offset
+                    utc_off = int(self.variables.get('__utc_offset__', 0))
+                    t = _dt.datetime.utcfromtimestamp(timestamp + utc_off * 3600)
                     # Find the struct variable name from the AST node
                     # Since MQL5 passes by reference, we need to set fields like "dt.hour", "dt.min"
                     if len(node.args) >= 2:

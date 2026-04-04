@@ -1150,10 +1150,103 @@ class PineInterpreter:
             if is_na(source): return self.variables.get('_cum_total', 0)
             total = self.variables.get('_cum_total', 0) + float(source)
             self.variables['_cum_total'] = total; return total
-        if name in ('ta.rising', 'ta.falling', 'ta.pivothigh', 'ta.pivotlow',
-                     'ta.valuewhen', 'ta.barssince', 'ta.swma', 'ta.percentrank',
-                     'ta.vwma', 'ta.mom'):
-            return NA
+        if name in ('ta.valuewhen', 'valuewhen'):
+            # ta.valuewhen(condition, source, occurrence)
+            # Returns source value when condition was true, `occurrence` times ago
+            cond = args[0] if args else False
+            source = args[1] if len(args) > 1 else NA
+            occurrence = int(args[2]) if len(args) > 2 else 0
+            cache_key = '_valuewhen_' + str(id(node))
+            history = self.variables.get(cache_key, [])
+            if self._truthy(cond):
+                history.append(source)
+            self.variables[cache_key] = history
+            idx = len(history) - 1 - occurrence
+            return history[idx] if 0 <= idx < len(history) else NA
+
+        if name in ('ta.barssince', 'barssince'):
+            # ta.barssince(condition) — bars since condition was last true
+            cond = args[0] if args else False
+            cache_key = '_barssince_' + str(id(node))
+            if self._truthy(cond):
+                self.variables[cache_key] = self.bar_index
+            last_bar = self.variables.get(cache_key, -1)
+            return self.bar_index - last_bar if last_bar >= 0 else NA
+
+        if name in ('ta.highestbars', 'highestbars'):
+            # ta.highestbars(source, length) — offset to the highest value bar (negative)
+            source = args[0] if args else self.variables.get('high', 0)
+            length = int(args[1] if len(args) > 1 else 14)
+            values = self._get_history(source, length)
+            valid = [(i, v) for i, v in enumerate(values) if v is not None]
+            if not valid: return NA
+            best_idx = max(valid, key=lambda x: x[1])[0]
+            return best_idx - (length - 1)  # negative offset from current
+
+        if name in ('ta.lowestbars', 'lowestbars'):
+            # ta.lowestbars(source, length) — offset to the lowest value bar (negative)
+            source = args[0] if args else self.variables.get('low', 0)
+            length = int(args[1] if len(args) > 1 else 14)
+            values = self._get_history(source, length)
+            valid = [(i, v) for i, v in enumerate(values) if v is not None]
+            if not valid: return NA
+            best_idx = min(valid, key=lambda x: x[1])[0]
+            return best_idx - (length - 1)
+
+        if name in ('ta.rising',):
+            source = args[0] if args else self.variables.get('close', 0)
+            length = int(args[1] if len(args) > 1 else 1)
+            values = self._get_history(source, length + 1)
+            valid = [v for v in values if v is not None]
+            if len(valid) < length + 1: return False
+            return all(valid[i] > valid[i-1] for i in range(1, len(valid)))
+
+        if name in ('ta.falling',):
+            source = args[0] if args else self.variables.get('close', 0)
+            length = int(args[1] if len(args) > 1 else 1)
+            values = self._get_history(source, length + 1)
+            valid = [v for v in values if v is not None]
+            if len(valid) < length + 1: return False
+            return all(valid[i] < valid[i-1] for i in range(1, len(valid)))
+
+        if name in ('ta.mom', 'mom'):
+            source = args[0] if args else self.variables.get('close', 0)
+            length = int(args[1] if len(args) > 1 else 10)
+            series_name = self._resolve_source(source)
+            series = self.series_data.get(series_name)
+            if series is None: return NA
+            current = series.get(0); prev = series.get(length)
+            return current - prev if not is_na(current) and not is_na(prev) else NA
+
+        if name in ('ta.vwma', 'vwma'):
+            source = args[0] if args else self.variables.get('close', 0)
+            length = int(args[1] if len(args) > 1 else 14)
+            prices = self._get_history(source, length)
+            vols = self._get_history(self.variables.get('volume', 0), length)
+            if len(prices) < length: return NA
+            total_vol = sum(v for v in vols if v is not None)
+            if total_vol == 0: return NA
+            return sum(p * v for p, v in zip(prices, vols) if p is not None and v is not None) / total_vol
+
+        if name in ('ta.percentrank',):
+            source = args[0] if args else self.variables.get('close', 0)
+            length = int(args[1] if len(args) > 1 else 14)
+            values = self._get_history(source, length)
+            valid = [v for v in values if v is not None]
+            if len(valid) < 2: return NA
+            current = valid[-1]
+            below = sum(1 for v in valid[:-1] if v < current)
+            return below / (len(valid) - 1) * 100
+
+        if name in ('ta.swma',):
+            source = args[0] if args else self.variables.get('close', 0)
+            values = self._get_history(source, 4)
+            valid = [v for v in values if v is not None]
+            if len(valid) < 4: return NA
+            return (valid[0] * 1 + valid[1] * 2 + valid[2] * 2 + valid[3] * 1) / 6
+
+        if name in ('ta.pivothigh', 'ta.pivotlow'):
+            return NA  # already handled above
 
         # Math
         if name in ('math.abs', 'abs'):

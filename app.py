@@ -6,7 +6,9 @@ import os
 import json
 import traceback
 import math
+import re
 import pandas as pd
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from flask import Flask, request, jsonify, send_from_directory, Response
 from backtester import Backtester
 
@@ -142,6 +144,7 @@ def _setup_backtest():
     slippage_pips = float(request.form.get('slippage_pips', 0.0))
     max_bars = int(request.form.get('max_bars', 0))
     base_tf = request.form.get('base_tf', 'M5')
+    utc_offset = int(request.form.get('utc_offset', 0))
 
     filepath = os.path.join(UPLOAD_FOLDER, 'data.csv')
     csv_file.save(filepath)
@@ -189,6 +192,7 @@ def _setup_backtest():
         smt_data=df_smt,
         extra_data=extra_dfs,
         base_tf=base_tf,
+        utc_offset=utc_offset,
     )
     return bt, engine, label
 
@@ -236,10 +240,42 @@ def run_backtest_stream():
         return jsonify({'error': str(e)}), 500
 
 
+def _apply_params(script, params, engine):
+    """Apply parameter substitutions to a script."""
+    modified = script
+    for name, val in params.items():
+        if engine == 'mql5':
+            modified = re.sub(
+                rf'(input\s+\w+\s+{re.escape(name)}\s*=\s*)\d+',
+                rf'\g<1>{val}', modified)
+        else:
+            modified = re.sub(
+                rf"({re.escape(name)}\s*=\s*input(?:\.int|\.float)?\s*\()\d+",
+                rf'\g<1>{val}', modified)
+    return modified
+
+
+def _run_single_backtest(df, script, engine, initial_capital, commission,
+                          commission_per_lot, commission_per_trade, default_qty,
+                          spread_pips, slippage_pips, smt_data, metric_name):
+    """Run a single backtest and return the optimization metric value.
+    Designed to be called from ProcessPoolExecutor."""
+    try:
+        bt = Backtester(data=df, source=script, engine=engine,
+                        initial_capital=initial_capital, commission_pct=commission,
+                        commission_per_lot=commission_per_lot,
+                        commission_per_trade=commission_per_trade,
+                        default_qty=default_qty, spread_pips=spread_pips,
+                        slippage_pips=slippage_pips, smt_data=smt_data)
+        r = bt.run()
+        return r['metrics'].get(metric_name, 0) or 0
+    except Exception:
+        return None
+
+
 @app.route('/api/optimize', methods=['POST'])
 def run_optimize():
     try:
-        import re
         from itertools import product
 
         # Parse common params
@@ -304,52 +340,50 @@ def run_optimize():
             best_metric = -999999
             best_params = {}
 
-            # Sweep parameters on train data
-            for combo in combos:
-                modified_script = script
-                params = {}
-                for name, val in zip(param_names, combo):
-                    params[name] = val
-                    if engine == 'mql5':
-                        modified_script = re.sub(
-                            rf'(input\s+\w+\s+{re.escape(name)}\s*=\s*)\d+',
-                            rf'\g<1>{val}', modified_script)
-                    else:
-                        modified_script = re.sub(
-                            rf"(input(?:\.int|\.float)?\s*\([^)]*(?:title\s*=\s*['\"]){re.escape(name)}['\"][^)]*defval\s*=\s*)\d+",
-                            rf'\g<1>{val}', modified_script)
-                        modified_script = re.sub(
-                            rf"({re.escape(name)}\s*=\s*input(?:\.int|\.float)?\s*\()\d+",
-                            rf'\g<1>{val}', modified_script)
-
-                try:
-                    bt_train = Backtester(data=train_df, source=modified_script, engine=engine,
-                                          initial_capital=initial_capital, commission_pct=commission,
-                                          commission_per_lot=commission_per_lot,
-                                          commission_per_trade=commission_per_trade,
-                                          default_qty=default_qty, spread_pips=spread_pips,
-                                          slippage_pips=slippage_pips, smt_data=train_smt)
-                    r = bt_train.run()
-                    m_val = r['metrics'].get(metric_name, 0)
-                    if m_val is None:
-                        m_val = 0
-                    if m_val > best_metric:
-                        best_metric = m_val
-                        best_params = params
-                except Exception:
-                    continue
+            # Sweep parameters on train data (parallel if >1 combo)
+            if len(combos) > 1:
+                # Parallel sweep using ProcessPoolExecutor
+                futures = {}
+                with ProcessPoolExecutor(max_workers=min(os.cpu_count() or 4, len(combos))) as executor:
+                    for combo in combos:
+                        params = dict(zip(param_names, combo))
+                        mod_script = _apply_params(script, params, engine)
+                        future = executor.submit(
+                            _run_single_backtest, train_df, mod_script, engine,
+                            initial_capital, commission, commission_per_lot,
+                            commission_per_trade, default_qty, spread_pips,
+                            slippage_pips, train_smt, metric_name)
+                        futures[future] = params
+                    for future in as_completed(futures):
+                        try:
+                            m_val = future.result()
+                            if m_val is not None and m_val > best_metric:
+                                best_metric = m_val
+                                best_params = futures[future]
+                        except Exception:
+                            continue
+            else:
+                # Single combo — no parallelism needed
+                for combo in combos:
+                    params = dict(zip(param_names, combo))
+                    mod_script = _apply_params(script, params, engine)
+                    try:
+                        bt_train = Backtester(data=train_df, source=mod_script, engine=engine,
+                                              initial_capital=initial_capital, commission_pct=commission,
+                                              commission_per_lot=commission_per_lot,
+                                              commission_per_trade=commission_per_trade,
+                                              default_qty=default_qty, spread_pips=spread_pips,
+                                              slippage_pips=slippage_pips, smt_data=train_smt)
+                        r = bt_train.run()
+                        m_val = r['metrics'].get(metric_name, 0) or 0
+                        if m_val > best_metric:
+                            best_metric = m_val
+                            best_params = params
+                    except Exception:
+                        continue
 
             # Test with best params
-            modified_script = script
-            for name, val in best_params.items():
-                if engine == 'mql5':
-                    modified_script = re.sub(
-                        rf'(input\s+\w+\s+{re.escape(name)}\s*=\s*)\d+',
-                        rf'\g<1>{val}', modified_script)
-                else:
-                    modified_script = re.sub(
-                        rf"({re.escape(name)}\s*=\s*input(?:\.int|\.float)?\s*\()\d+",
-                        rf'\g<1>{val}', modified_script)
+            modified_script = _apply_params(script, best_params, engine)
 
             try:
                 bt_test = Backtester(data=test_df, source=modified_script, engine=engine,
