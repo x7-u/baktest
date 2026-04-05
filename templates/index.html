@@ -1363,37 +1363,37 @@ async function runBacktest() {
       }
     }
   } catch (err) {
-    // Fallback to regular fetch
-    try {
-      const resp2 = await fetch('/api/backtest', { method: 'POST', body: formData });
-      const data = await resp2.json();
-      if (data.error) {
-        const content = document.getElementById('content');
-        const results = document.getElementById('results');
-        const empty = document.getElementById('emptyState');
-        content.classList.remove('empty');
-        empty.style.display = 'none';
-        results.style.display = 'block';
-        const lineMatch = data.error.match(/line (\d+)/i);
-        const lineNum = lineMatch ? parseInt(lineMatch[1]) : null;
-        let errorHtml = `<div class="error-box">${data.error}</div>`;
-        if (lineNum) {
-          errorHtml += `<div style="color:var(--text-dim);font-size:12px;margin-top:8px;padding:0 4px;">
-            The error is on <strong style="color:var(--red);">line ${lineNum}</strong> of your script.
-            <button onclick="jumpToLine(${lineNum})" style="background:var(--red-dim);color:var(--red);border:1px solid var(--red);border-radius:4px;padding:2px 10px;margin-left:8px;cursor:pointer;font-size:11px;">Go to Line ${lineNum}</button>
-          </div>`;
-        }
-        results.innerHTML = errorHtml;
-      } else {
-        renderResults(data);
-      }
-    } catch (err2) {
-      alert('Error: ' + err2.message + '\n\nMake sure the Flask server is running (python app.py).');
-    }
-  } catch (abortErr) {
-    if (abortErr.name === 'AbortError') {
+    if (err.name === 'AbortError') {
       progText.textContent = 'Cancelled';
       progBar.style.background = 'var(--red)';
+    } else {
+      // Fallback to regular fetch
+      try {
+        const resp2 = await fetch('/api/backtest', { method: 'POST', body: formData });
+        const data = await resp2.json();
+        if (data.error) {
+          const content = document.getElementById('content');
+          const results = document.getElementById('results');
+          const empty = document.getElementById('emptyState');
+          content.classList.remove('empty');
+          empty.style.display = 'none';
+          results.style.display = 'block';
+          const lineMatch = data.error.match(/line (\d+)/i);
+          const lineNum = lineMatch ? parseInt(lineMatch[1]) : null;
+          let errorHtml = `<div class="error-box">${data.error}</div>`;
+          if (lineNum) {
+            errorHtml += `<div style="color:var(--text-dim);font-size:12px;margin-top:8px;padding:0 4px;">
+              The error is on <strong style="color:var(--red);">line ${lineNum}</strong> of your script.
+              <button onclick="jumpToLine(${lineNum})" style="background:var(--red-dim);color:var(--red);border:1px solid var(--red);border-radius:4px;padding:2px 10px;margin-left:8px;cursor:pointer;font-size:11px;">Go to Line ${lineNum}</button>
+            </div>`;
+          }
+          results.innerHTML = errorHtml;
+        } else {
+          renderResults(data);
+        }
+      } catch (err2) {
+        alert('Error: ' + err2.message + '\n\nMake sure the Flask server is running (python app.py).');
+      }
     }
   } finally {
     btn.disabled = false;
