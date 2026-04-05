@@ -109,7 +109,8 @@ class Backtester:
                  extra_data=None,
                  base_tf: str = 'M5',
                  utc_offset: int = 0,
-                 date_filters: list = None):
+                 date_filters: list = None,
+                 symbol_name: str = ''):
         self.data = data
         self.smt_data = smt_data
         self.extra_data = extra_data or []
@@ -117,6 +118,7 @@ class Backtester:
         self.utc_offset = utc_offset
         self.date_filters = date_filters or []
         self.risk_pct = risk_pct
+        self.symbol_name = symbol_name.upper()
         self.source = source
         self.engine = engine
         self.initial_capital = initial_capital
@@ -241,6 +243,15 @@ class Backtester:
         # Expose MTF engine and broker UTC offset to interpreter
         interpreter.variables['__mtf__'] = self._mtf
         interpreter.variables['__utc_offset__'] = self.utc_offset
+
+        # Detect base/profit currencies from symbol name (e.g. NZDCHF → NZD, CHF)
+        sym = self.symbol_name
+        if len(sym) >= 6:
+            interpreter.variables['__base_ccy__'] = sym[:3]
+            interpreter.variables['__profit_ccy__'] = sym[3:6]
+        else:
+            interpreter.variables['__base_ccy__'] = 'USD'
+            interpreter.variables['__profit_ccy__'] = 'USD'
 
         config = interpreter.strategy_config
         balance = self.initial_capital

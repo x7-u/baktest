@@ -1777,9 +1777,10 @@ class MQL5Interpreter:
 
         if name == 'SymbolInfoString':
             prop = args[1] if len(args) > 1 else 0
-            if prop == 300:  # SYMBOL_CURRENCY_PROFIT
-                return 'JPY' if self._is_jpy_pair else 'USD'
-            if prop == 301: return 'NZD'  # SYMBOL_CURRENCY_BASE
+            if prop == 300:  # SYMBOL_CURRENCY_PROFIT — last 3 chars of symbol
+                return self.variables.get('__profit_ccy__', 'USD')
+            if prop == 301:  # SYMBOL_CURRENCY_BASE — first 3 chars of symbol
+                return self.variables.get('__base_ccy__', 'NZD')
             return ''
 
         if name == 'SymbolInfoTick':

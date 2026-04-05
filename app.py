@@ -363,12 +363,14 @@ def mt5_fetch_and_backtest():
             commission_per_lot=commission_per_lot,
             commission_per_trade=commission_per_trade,
             default_qty=default_qty,
+            risk_pct=risk_pct,
             spread_pips=spread_pips,
             slippage_pips=slippage_pips,
             smt_data=df_smt,
             base_tf=tf_string,
             utc_offset=utc_offset,
             date_filters=date_filters,
+            symbol_name=symbol,
         )
         results = bt.run()
 

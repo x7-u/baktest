@@ -1025,10 +1025,13 @@ function createDistributionChart(dist) {
 
 function formatNum(n, prefix = '') {
   if (n === undefined || n === null) return '-';
+  const fmt = {minimumFractionDigits: 2, maximumFractionDigits: 2};
+  if (prefix === '$') {
+    if (n < 0) return '-$' + Math.abs(n).toLocaleString(undefined, fmt);
+    return '$' + n.toLocaleString(undefined, fmt);
+  }
   const sign = n > 0 ? '+' : '';
-  return prefix + (prefix === '$' ? '' : sign) + (prefix === '$'
-    ? (n < 0 ? '-$' + Math.abs(n).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '$' + n.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}))
-    : n.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}));
+  return sign + n.toLocaleString(undefined, fmt);
 }
 
 function pnlClass(v) { return v > 0 ? 'positive' : v < 0 ? 'negative' : 'neutral'; }
