@@ -4,7 +4,21 @@ A web-based backtesting engine that runs **Pine Script v5** and **MQL5 Expert Ad
 
 ## Changelog
 
-### v3.2 — Accuracy Overhaul (Latest)
+### v3.2 — MT5 Integration + Accuracy Overhaul (Latest)
+
+**MetaTrader 5 Integration**
+- Fetch OHLCV data directly from a running MT5 terminal — no CSV export needed
+- Symbol autocomplete from your broker's available instruments
+- Date range picker with YYYY-MM-DD format
+- SMT symbol fetch for correlation analysis
+- Green/red connection status indicator in the UI
+- Requires `pip install MetaTrader5` and MT5 terminal running
+
+**Risk-Based Position Sizing**
+- New "Risk per Trade (%)" setting — auto-calculates lot size from SL distance and equity
+- Set to 1% → each trade risks exactly 1% of current equity if SL is hit
+- Works with both Pine Script `strategy.exit(stop=...)` and MQL5 `trade.Buy(..., sl, ...)`
+- Falls back to fixed qty when no SL is provided
 
 **Indicator Accuracy**
 - **Wilder's RSI** — proper exponential smoothing with persistent state across bars (was simple average)
