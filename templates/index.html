@@ -468,10 +468,11 @@ textarea.pine-editor:focus { border-color: var(--blue); }
 <div class="main">
   <div class="sidebar">
     <div class="sidebar-section">
-      <h3 style="display:flex;align-items:center;justify-content:space-between;">
-        Market Data
-        <span id="mt5Status" style="font-size:10px;font-weight:400;display:none;"></span>
-      </h3>
+      <h3>Market Data</h3>
+      <div id="mt5StatusBox" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin-bottom:8px;display:flex;align-items:center;gap:6px;font-size:11px;">
+        <span id="mt5StatusDot" style="color:var(--text-dim);">&#9679;</span>
+        <span id="mt5StatusText" style="color:var(--text-dim);">Checking MT5...</span>
+      </div>
       <div class="bar-chips" style="margin-bottom:8px;">
         <button class="bar-chip active" id="btnDataCSV" onclick="setDataMode('csv')">Upload CSV</button>
         <button class="bar-chip" id="btnDataMT5" onclick="setDataMode('mt5')">Fetch from MT5</button>
@@ -1721,18 +1722,22 @@ function setDataMode(mode) {
 // ── MT5 Status + Symbol Autocomplete ──
 let _mt5SymbolsLoaded = false;
 function checkMT5Status() {
+  const dot = document.getElementById('mt5StatusDot');
+  const txt = document.getElementById('mt5StatusText');
   fetch('/api/mt5/status').then(r => r.json()).then(data => {
-    const status = document.getElementById('mt5Status');
-    status.style.display = 'inline';
     if (data.connected) {
-      status.innerHTML = '<span style="color:var(--green);">&#9679;</span> MT5 Connected';
+      dot.style.color = 'var(--green)';
+      txt.style.color = 'var(--green)';
+      txt.textContent = 'MT5 Connected';
     } else {
-      status.innerHTML = '<span style="color:var(--red);">&#9679;</span> MT5 Offline';
+      dot.style.color = 'var(--red)';
+      txt.style.color = 'var(--red)';
+      txt.textContent = 'MT5 Offline — start MetaTrader 5';
     }
   }).catch(() => {
-    const status = document.getElementById('mt5Status');
-    status.style.display = 'inline';
-    status.innerHTML = '<span style="color:var(--text-dim);">&#9679;</span> MT5 N/A';
+    dot.style.color = 'var(--text-dim)';
+    txt.style.color = 'var(--text-dim)';
+    txt.textContent = 'MT5 not available';
   });
 }
 // Check status on page load (defer to ensure DOM is ready)
