@@ -1561,7 +1561,7 @@ function saveDateFilters() {
 const PROFILE_FIELDS = ['initialCapital', 'commission', 'defaultQty', 'spreadPips', 'slippagePips', 'commissionPerLot', 'utcOffset'];
 
 function getProfileData() {
-  const data = { engine: currentEngine, baseTF: currentBaseTF, maxBars: document.getElementById('maxBars').value };
+  const data = { engine: currentEngine, baseTF: currentBaseTF, maxBars: document.getElementById('maxBars').value, dateFilters: getDateFilters() };
   PROFILE_FIELDS.forEach(id => { data[id] = document.getElementById(id).value; });
   return data;
 }
@@ -1573,6 +1573,23 @@ function applyProfileData(data) {
   PROFILE_FIELDS.forEach(id => {
     if (data[id] !== undefined) document.getElementById(id).value = data[id];
   });
+  // Restore date filters
+  if (data.dateFilters) {
+    document.getElementById('dateFilters').innerHTML = '';
+    data.dateFilters.forEach(f => {
+      if (f.from === f.to) addDateFilter('single');
+      else addDateFilter('range');
+      const divs = document.querySelectorAll('#dateFilters > div');
+      const last = divs[divs.length - 1];
+      if (last) {
+        const fromInp = last.querySelector('.df-from');
+        const toInp = last.querySelector('.df-to');
+        if (fromInp) fromInp.value = f.from;
+        if (toInp) toInp.value = f.to;
+      }
+    });
+    saveDateFilters();
+  }
 }
 
 function saveProfile() {

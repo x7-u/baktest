@@ -614,7 +614,7 @@ def is_na(v):
     return v is NA or v is None or (isinstance(v, float) and math.isnan(v))
 
 class Series:
-    def __init__(self, max_lookback=500):
+    def __init__(self, max_lookback=5000):
         self.data = []
         self._start = 0
         self._max = max_lookback
@@ -657,6 +657,8 @@ class PineInterpreter:
         self._first_bar = True
         self._series_vars = set()  # filled by setup() via AST pre-scan
         self._bar_cache = {}
+        self._max_exec_count = 0
+        self._max_exec_limit = 500000  # max AST evaluations per bar
         # Secondary (SMT) data
         self._smt_row_cache = None
         self._smt_series = {}
@@ -753,6 +755,7 @@ class PineInterpreter:
     def run_bar(self, idx):
         self.bar_index = idx
         self._bar_cache = {}
+        self._max_exec_count = 0
         self.signals = []
 
         row = self._row_cache[idx]
@@ -846,6 +849,9 @@ class PineInterpreter:
             self.user_functions[node.name] = node
 
     def _eval(self, node) -> Any:
+        self._max_exec_count += 1
+        if self._max_exec_count > self._max_exec_limit:
+            raise RuntimeError(f'Execution limit exceeded on bar {self.bar_index} — possible infinite loop')
         if isinstance(node, NumberLit): return node.value
         if isinstance(node, StringLit): return node.value
         if isinstance(node, BoolLit): return node.value
@@ -1106,6 +1112,10 @@ class PineInterpreter:
                 # Try SMT data
                 if self._smt_row_cache and expr_col and expr_col in self._smt_series:
                     return self._smt_series[expr_col].get(0)
+                # If requesting a different TF that's not available, return NA
+                if timeframe and str(timeframe) not in ('', '0', 'current'):
+                    return NA
+                # Same TF or unspecified: return current value
                 return expr_val
             return NA
 
@@ -1174,24 +1184,34 @@ class PineInterpreter:
             return self.bar_index - last_bar if last_bar >= 0 else NA
 
         if name in ('ta.highestbars', 'highestbars'):
-            # ta.highestbars(source, length) — offset to the highest value bar (negative)
             source = args[0] if args else self.variables.get('high', 0)
             length = int(args[1] if len(args) > 1 else 14)
-            values = self._get_history(source, length)
-            valid = [(i, v) for i, v in enumerate(values) if v is not None]
-            if not valid: return NA
-            best_idx = max(valid, key=lambda x: x[1])[0]
-            return best_idx - (length - 1)  # negative offset from current
+            series_name = self._resolve_source(source)
+            series = self.series_data.get(series_name)
+            if series is None: return NA
+            best_val = None
+            best_offset = 0
+            for i in range(length):
+                v = series.get(i)
+                if not is_na(v) and (best_val is None or float(v) > float(best_val)):
+                    best_val = v
+                    best_offset = -i  # negative offset from current bar
+            return best_offset if best_val is not None else NA
 
         if name in ('ta.lowestbars', 'lowestbars'):
-            # ta.lowestbars(source, length) — offset to the lowest value bar (negative)
             source = args[0] if args else self.variables.get('low', 0)
             length = int(args[1] if len(args) > 1 else 14)
-            values = self._get_history(source, length)
-            valid = [(i, v) for i, v in enumerate(values) if v is not None]
-            if not valid: return NA
-            best_idx = min(valid, key=lambda x: x[1])[0]
-            return best_idx - (length - 1)
+            series_name = self._resolve_source(source)
+            series = self.series_data.get(series_name)
+            if series is None: return NA
+            best_val = None
+            best_offset = 0
+            for i in range(length):
+                v = series.get(i)
+                if not is_na(v) and (best_val is None or float(v) < float(best_val)):
+                    best_val = v
+                    best_offset = -i
+            return best_offset if best_val is not None else NA
 
         if name in ('ta.rising',):
             source = args[0] if args else self.variables.get('close', 0)
@@ -1422,10 +1442,9 @@ class PineInterpreter:
         series = self.series_data.get(series_name)
         if series is None or len(series) == 0: return []
         values = []
-        for i in range(length):
+        for i in range(length - 1, -1, -1):  # oldest to newest
             v = series.get(i)
             values.append(None if is_na(v) else float(v))
-        values.reverse()
         return values
 
     def _ta_pivothigh(self, args, kwargs):
@@ -1502,7 +1521,7 @@ class PineInterpreter:
         if is_na(prev_ema):
             values = self._get_history(source, length)
             valid = [v for v in values if v is not None]
-            if len(valid) < length: return NA
+            if len(valid) == 0: return NA
             ema = sum(valid) / len(valid)
         else:
             k = 2.0 / (length + 1)
@@ -1515,16 +1534,50 @@ class PineInterpreter:
         length = int(args[1] if len(args) > 1 else kwargs.get('length', 14))
         cache_key = ('rsi', self._resolve_source(source), length)
         if cache_key in self._bar_cache: return self._bar_cache[cache_key]
-        values = self._get_history(source, length + 1)
-        valid = [v for v in values if v is not None]
-        if len(valid) < length + 1:
+
+        series_name = self._resolve_source(source)
+        series = self.series_data.get(series_name)
+        if series is None or len(series) < 2:
             self._bar_cache[cache_key] = NA; return NA
-        arr = np.array(valid)
-        diffs = np.diff(arr)
-        gains = np.maximum(diffs, 0)
-        losses = np.maximum(-diffs, 0)
-        ag = float(np.mean(gains)); al = float(np.mean(losses))
-        result = 100.0 if al == 0 else 100.0 - (100.0 / (1.0 + ag / al))
+
+        current = series.get(0)
+        prev = series.get(1)
+        if is_na(current) or is_na(prev):
+            self._bar_cache[cache_key] = NA; return NA
+
+        change = float(current) - float(prev)
+        gain = max(change, 0)
+        loss = max(-change, 0)
+
+        gain_key = f'_rsi_gain_{series_name}_{length}'
+        loss_key = f'_rsi_loss_{series_name}_{length}'
+        prev_avg_gain = self.variables.get(gain_key, NA)
+        prev_avg_loss = self.variables.get(loss_key, NA)
+
+        if is_na(prev_avg_gain):
+            # Seed: need at least length+1 bars of history
+            values = self._get_history(source, length + 1)
+            valid = [v for v in values if v is not None]
+            if len(valid) < length + 1:
+                self._bar_cache[cache_key] = NA; return NA
+            gains = [max(valid[i] - valid[i-1], 0) for i in range(1, len(valid))]
+            losses = [max(valid[i-1] - valid[i], 0) for i in range(1, len(valid))]
+            avg_gain = sum(gains) / length
+            avg_loss = sum(losses) / length
+        else:
+            # Wilder's smoothing
+            avg_gain = (prev_avg_gain * (length - 1) + gain) / length
+            avg_loss = (prev_avg_loss * (length - 1) + loss) / length
+
+        self.variables[gain_key] = avg_gain
+        self.variables[loss_key] = avg_loss
+
+        if avg_loss == 0:
+            result = 100.0
+        else:
+            rs = avg_gain / avg_loss
+            result = 100.0 - (100.0 / (1.0 + rs))
+
         self._bar_cache[cache_key] = result
         return result
 
@@ -1532,16 +1585,36 @@ class PineInterpreter:
         length = int(args[0] if args else kwargs.get('length', 14))
         cache_key = ('atr', length)
         if cache_key in self._bar_cache: return self._bar_cache[cache_key]
-        tr_values = []
-        for i in range(length):
-            h = self.series_data['high'].get(i); l = self.series_data['low'].get(i)
-            c_prev = self.series_data['close'].get(i + 1)
-            if is_na(h) or is_na(l):
-                self._bar_cache[cache_key] = NA; return NA
-            tr_values.append(max(h - l, abs(h - c_prev), abs(l - c_prev)) if not is_na(c_prev) else h - l)
-        result = sum(tr_values) / len(tr_values) if tr_values else NA
-        self._bar_cache[cache_key] = result
-        return result
+
+        h = self.series_data['high'].get(0)
+        l = self.series_data['low'].get(0)
+        c_prev = self.series_data['close'].get(1)
+        if is_na(h) or is_na(l):
+            self._bar_cache[cache_key] = NA; return NA
+
+        tr = max(h - l, abs(h - c_prev), abs(l - c_prev)) if not is_na(c_prev) else h - l
+
+        atr_key = f'_atr_{length}'
+        prev_atr = self.variables.get(atr_key, NA)
+
+        if is_na(prev_atr):
+            # Seed with simple average of TR
+            tr_values = []
+            for i in range(length):
+                hi = self.series_data['high'].get(i)
+                lo = self.series_data['low'].get(i)
+                cp = self.series_data['close'].get(i + 1)
+                if is_na(hi) or is_na(lo):
+                    self._bar_cache[cache_key] = NA; return NA
+                tr_values.append(max(hi - lo, abs(hi - cp), abs(lo - cp)) if not is_na(cp) else hi - lo)
+            atr = sum(tr_values) / length
+        else:
+            # Wilder's smoothing: ATR = (prev_ATR * (length-1) + TR) / length
+            atr = (prev_atr * (length - 1) + tr) / length
+
+        self.variables[atr_key] = atr
+        self._bar_cache[cache_key] = atr
+        return atr
 
     def _ta_wma(self, args, kwargs):
         source = args[0] if args else self.variables.get('close', 0)
@@ -1638,7 +1711,7 @@ class PineInterpreter:
             self._bar_cache[cache_key] = NA; return NA
         highest = max(vh); lowest = min(vl)
         current = source if isinstance(source, (int, float)) else self.variables.get('close', 0)
-        result = 100.0 * (current - lowest) / (highest - lowest) if highest != lowest else 50.0
+        result = 100.0 * (current - lowest) / (highest - lowest) if highest != lowest else NA
         self._bar_cache[cache_key] = result
         return result
 

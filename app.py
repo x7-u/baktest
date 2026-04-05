@@ -146,6 +146,18 @@ def _setup_backtest():
     base_tf = request.form.get('base_tf', 'M5')
     utc_offset = int(request.form.get('utc_offset', 0))
 
+    # Validate inputs
+    if initial_capital <= 0:
+        raise ValueError('Starting balance must be positive')
+    if commission < 0 or commission_per_lot < 0 or commission_per_trade < 0:
+        raise ValueError('Commission values cannot be negative')
+    if spread_pips < 0:
+        raise ValueError('Spread cannot be negative')
+    if slippage_pips < 0:
+        raise ValueError('Slippage cannot be negative')
+    if default_qty <= 0:
+        raise ValueError('Default quantity must be positive')
+
     filepath = os.path.join(UPLOAD_FOLDER, 'data.csv')
     csv_file.save(filepath)
     df = parse_metatrader_csv(filepath)
@@ -365,7 +377,9 @@ def run_optimize():
                             if m_val is not None and m_val > best_metric:
                                 best_metric = m_val
                                 best_params = futures[future]
-                        except Exception:
+                        except Exception as opt_err:
+                            import traceback
+                            traceback.print_exc()
                             continue
             else:
                 # Single combo — no parallelism needed
@@ -384,7 +398,9 @@ def run_optimize():
                         if m_val > best_metric:
                             best_metric = m_val
                             best_params = params
-                    except Exception:
+                    except Exception as opt_err:
+                        import traceback
+                        traceback.print_exc()
                         continue
 
             # Test with best params
@@ -410,7 +426,9 @@ def run_optimize():
                 total_oos_pnl += test_m['net_profit']
                 total_oos_trades += test_m['total_trades']
                 total_oos_wins += test_m['winning_trades']
-            except Exception:
+            except Exception as opt_err:
+                import traceback
+                traceback.print_exc()
                 windows.append({
                     'train_metric': round(best_metric, 2),
                     'best_params': best_params,

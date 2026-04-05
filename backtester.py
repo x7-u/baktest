@@ -129,7 +129,7 @@ class Backtester:
         self.open_position = None
         self.open_positions = {}   # {trade_id: Trade} for portfolio mode
         self._next_trade_id = 0
-        self.pending_exits: list[PendingExit] = []
+        self.pending_exits: dict = {}  # {trade_id: PendingExit}
         self.pending_entries: list[PendingEntry] = []
         self.equity_curve = []
         self.balance_curve = []
@@ -256,41 +256,40 @@ class Backtester:
             # ── Check pending SL/TP with intra-bar ordering (all positions) ──
             closed_tids = []
             for tid, pos in list(self.open_positions.items()):
-                if not self.pending_exits:
-                    break
-                for exit_order in self.pending_exits:
-                    sl_hit = False; tp_hit = False
-                    sl_price = None; tp_price = None
+                exit_order = self.pending_exits.get(tid)
+                if not exit_order:
+                    continue
+                sl_hit = False; tp_hit = False
+                sl_price = None; tp_price = None
 
+                if pos.direction == 'long':
+                    if exit_order.stop is not None and not is_na(exit_order.stop) and bar_low <= exit_order.stop:
+                        sl_hit = True; sl_price = exit_order.stop
+                    if exit_order.limit is not None and not is_na(exit_order.limit) and bar_high >= exit_order.limit:
+                        tp_hit = True; tp_price = exit_order.limit
+                else:
+                    if exit_order.stop is not None and not is_na(exit_order.stop) and bar_high >= exit_order.stop:
+                        sl_hit = True; sl_price = exit_order.stop
+                    if exit_order.limit is not None and not is_na(exit_order.limit) and bar_low <= exit_order.limit:
+                        tp_hit = True; tp_price = exit_order.limit
+
+                if sl_hit and tp_hit:
+                    bullish_bar = current_price >= bar_open
                     if pos.direction == 'long':
-                        if exit_order.stop is not None and not is_na(exit_order.stop) and bar_low <= exit_order.stop:
-                            sl_hit = True; sl_price = exit_order.stop
-                        if exit_order.limit is not None and not is_na(exit_order.limit) and bar_high >= exit_order.limit:
-                            tp_hit = True; tp_price = exit_order.limit
+                        exit_price = sl_price if not bullish_bar else tp_price
                     else:
-                        if exit_order.stop is not None and not is_na(exit_order.stop) and bar_high >= exit_order.stop:
-                            sl_hit = True; sl_price = exit_order.stop
-                        if exit_order.limit is not None and not is_na(exit_order.limit) and bar_low <= exit_order.limit:
-                            tp_hit = True; tp_price = exit_order.limit
+                        exit_price = sl_price if bullish_bar else tp_price
+                elif sl_hit:
+                    exit_price = sl_price
+                elif tp_hit:
+                    exit_price = tp_price
+                else:
+                    continue
 
-                    if sl_hit and tp_hit:
-                        bullish_bar = current_price >= bar_open
-                        if pos.direction == 'long':
-                            exit_price = sl_price if not bullish_bar else tp_price
-                        else:
-                            exit_price = sl_price if bullish_bar else tp_price
-                    elif sl_hit:
-                        exit_price = sl_price
-                    elif tp_hit:
-                        exit_price = tp_price
-                    else:
-                        continue
-
-                    balance = self._close_position(tid, i, exit_price, current_date, balance, is_na)
-                    closed_tids.append(tid)
-                    break
-            if closed_tids and not self.open_positions:
-                self.pending_exits = []
+                balance = self._close_position(tid, i, exit_price, current_date, balance, is_na)
+                if tid in self.pending_exits:
+                    del self.pending_exits[tid]
+                closed_tids.append(tid)
 
             # ── MAE/MFE (all positions) ──
             for pos in self.open_positions.values():
@@ -346,7 +345,8 @@ class Backtester:
             interpreter.run_bar(i)
 
             # Get strategy config on first bar
-            if i == 0 and interpreter.strategy_config:
+            if interpreter.strategy_config and not hasattr(self, '_config_applied'):
+                self._config_applied = True
                 config = interpreter.strategy_config
                 if 'initial_capital' in config and not is_na(config['initial_capital']):
                     self.initial_capital = float(config['initial_capital'])
@@ -369,13 +369,13 @@ class Backtester:
                         triggered = True
                     elif pe.direction == 'short' and bar_low <= pe.price:
                         triggered = True
-                if triggered and not self.open_positions:
+                if triggered:
                     entry_price = self._apply_entry_price(pe.price, pe.direction)
                     new_trade = Trade(pe.direction, i, entry_price, pe.qty, pe.comment, current_date,
                                      sl_price=pe.sl, tp_price=pe.tp)
-                    self._add_position(new_trade)
+                    tid = self._add_position(new_trade)
                     if pe.sl or pe.tp:
-                        self.pending_exits = [PendingExit(stop=pe.sl, limit=pe.tp, comment=pe.comment)]
+                        self.pending_exits[tid] = PendingExit(stop=pe.sl, limit=pe.tp, comment=pe.comment)
                     self.pending_entries.remove(pe)
                     break
 
@@ -402,7 +402,8 @@ class Backtester:
                         for tid, pos in list(self.open_positions.items()):
                             if pos.direction != signal.direction:
                                 balance = self._close_position(tid, i, current_price, current_date, balance, is_na)
-                                self.pending_exits = []
+                                if tid in self.pending_exits:
+                                    del self.pending_exits[tid]
                         if not self.open_positions:
                             qty = signal.qty if signal.qty and not is_na(signal.qty) else self.default_qty
                             if qty <= 0: qty = self.default_qty
@@ -411,22 +412,21 @@ class Backtester:
                                               signal.comment, current_date,
                                               sl_price=signal.stop, tp_price=signal.limit)
                             self._add_position(new_trade)
-                            self.pending_exits = []
 
                 elif signal.action == 'close':
                     for tid, pos in list(self.open_positions.items()):
                         if signal.direction == 'all' or pos.direction == signal.direction:
                             balance = self._close_position(tid, i, current_price, current_date, balance, is_na)
-                    if not self.open_positions:
-                        self.pending_exits = []
+                            if tid in self.pending_exits:
+                                del self.pending_exits[tid]
 
                 elif signal.action == 'exit':
-                    if self.open_position:
-                        self.open_position.sl_price = signal.stop
-                        self.open_position.tp_price = signal.limit
-                        self.pending_exits = [PendingExit(
+                    for tid in self.open_positions:
+                        self.open_positions[tid].sl_price = signal.stop
+                        self.open_positions[tid].tp_price = signal.limit
+                        self.pending_exits[tid] = PendingExit(
                             stop=signal.stop, limit=signal.limit,
-                            from_entry=signal.from_entry, comment=signal.comment)]
+                            from_entry=signal.from_entry, comment=signal.comment)
 
             # Equity — sum unrealized across all positions
             equity = balance
@@ -498,6 +498,17 @@ class Backtester:
                             f_to = _pd.Timestamp(filt.get('to', filt.get('from', '')))
                             f_to = f_to + _pd.Timedelta(days=1) - _pd.Timedelta(seconds=1)
                             if f_from <= entry_dt <= f_to:
+                                excluded = True; break
+                    except Exception:
+                        pass
+                if not excluded and t.exit_date:
+                    try:
+                        exit_dt = _pd.Timestamp(str(t.exit_date))
+                        for filt in self.date_filters:
+                            f_from = _pd.Timestamp(filt.get('from', ''))
+                            f_to = _pd.Timestamp(filt.get('to', filt.get('from', '')))
+                            f_to = f_to + _pd.Timedelta(days=1) - _pd.Timedelta(seconds=1)
+                            if f_from <= exit_dt <= f_to:
                                 excluded = True; break
                     except Exception:
                         pass
@@ -607,18 +618,32 @@ def calculate_metrics(trades, equity_curve, drawdown_curve, initial_capital, dat
     risk_reward = avg_win / avg_loss if avg_loss > 0 else (999.99 if avg_win > 0 else 0)
     max_consec_wins = _max_consecutive(trades, lambda t: t.pnl > 0)
     max_consec_losses = _max_consecutive(trades, lambda t: t.pnl < 0)
-    max_drawdown = min(drawdown_curve) if drawdown_curve else 0
+    # Single-pass max drawdown: both % and $ from the same iteration
+    max_drawdown_pct = 0
     max_drawdown_abs = 0
-    if equity_curve:
-        peak = equity_curve[0]
-        for eq in equity_curve:
-            peak = max(peak, eq); max_drawdown_abs = max(max_drawdown_abs, peak - eq)
+    peak = equity_curve[0] if equity_curve else initial_capital
+    for eq_val in equity_curve:
+        peak = max(peak, eq_val)
+        dd_abs = peak - eq_val
+        dd_pct = (dd_abs / peak * 100) if peak > 0 else 0
+        max_drawdown_abs = max(max_drawdown_abs, dd_abs)
+        max_drawdown_pct = max(max_drawdown_pct, dd_pct)
+    max_drawdown = -max_drawdown_pct  # Negative convention
+
     avg_bars_held = sum(t.bars_held for t in trades) / total_trades
+
+    # Resample equity to daily for realistic Sharpe/Sortino
     eq = np.array(equity_curve) if equity_curve else np.array([initial_capital])
-    returns = np.diff(eq) / eq[:-1] if len(eq) > 1 else np.array([])
-    sharpe = (np.mean(returns) / np.std(returns)) * np.sqrt(252) if len(returns) > 1 and np.std(returns) > 0 else 0
-    dr = returns[returns < 0]
-    sortino = (np.mean(returns) / np.std(dr)) * np.sqrt(252) if len(dr) > 0 and np.std(dr) > 0 else 0
+    if len(eq) > 252:
+        # Downsample to ~daily by taking every Nth point
+        bars_per_day = max(1, len(eq) // max(1, len(equity_curve) // 252))
+        daily_eq = eq[::bars_per_day]
+    else:
+        daily_eq = eq
+    daily_returns = np.diff(daily_eq) / daily_eq[:-1] if len(daily_eq) > 1 else np.array([])
+    sharpe = (np.mean(daily_returns) / np.std(daily_returns)) * np.sqrt(252) if len(daily_returns) > 1 and np.std(daily_returns) > 0 else 0
+    dr = daily_returns[daily_returns < 0]
+    sortino = (np.mean(daily_returns) / np.std(dr)) * np.sqrt(252) if len(dr) > 0 and np.std(dr) > 0 else 0
     calmar = abs(net_profit_pct / max_drawdown) if max_drawdown != 0 else 0
     recovery = net_profit / max_drawdown_abs if max_drawdown_abs > 0 else 0
     expectancy = (win_rate / 100 * avg_win) - ((1 - win_rate / 100) * avg_loss)

@@ -978,7 +978,7 @@ def is_na(v):
 
 
 class Series:
-    def __init__(self, max_lookback=500):
+    def __init__(self, max_lookback=5000):
         self.data = []
         self._start = 0
         self._max = max_lookback
@@ -1114,6 +1114,8 @@ class MQL5Interpreter:
         # EMA cache
         self._ema_cache = {}
         self._bar_cache = {}
+        self._max_exec_count = 0
+        self._max_exec_limit = 500000  # max AST evaluations per bar
 
     def _prescan_ast(self):
         """Separate top-level statements into globals, functions, and OnXxx handlers."""
@@ -1265,6 +1267,7 @@ class MQL5Interpreter:
     def run_bar(self, idx):
         self.bar_index = idx
         self._bar_cache = {}
+        self._max_exec_count = 0
         self.signals = []
 
         row = self._row_cache[idx]
@@ -1425,6 +1428,9 @@ class MQL5Interpreter:
     # ─── Evaluation ───────────────────────────────────────────────────────
 
     def _eval(self, node) -> Any:
+        self._max_exec_count += 1
+        if self._max_exec_count > self._max_exec_limit:
+            raise RuntimeError(f'Execution limit exceeded on bar {self.bar_index} — possible infinite loop')
         if node is None: return NA
         if isinstance(node, NumberLit): return node.value
         if isinstance(node, StringLit): return node.value
@@ -2235,7 +2241,7 @@ class MQL5Interpreter:
             highest = max(vh); lowest = min(vl)
             close_val = self.series_data['close'].get(shift)
             if is_na(close_val): return NA
-            if highest == lowest: return 50.0
+            if highest == lowest: return NA
             return 100.0 * (close_val - lowest) / (highest - lowest)
 
         return NA
@@ -2250,10 +2256,9 @@ class MQL5Interpreter:
         series = self.series_data.get(source_name)
         if series is None or len(series) == 0: return []
         values = []
-        for i in range(length):
+        for i in range(length - 1, -1, -1):  # oldest to newest
             v = series.get(i + extra_shift)
             values.append(None if is_na(v) else float(v))
-        values.reverse()
         return values
 
     def _calc_sma(self, source_name, period, shift=0):
@@ -2276,15 +2281,15 @@ class MQL5Interpreter:
             # For shifted values, compute from scratch
             values = self._get_history(source_name, period + shift, 0)
             valid = [v for v in values if v is not None]
-            if len(valid) < period: return NA
+            if len(valid) == 0: return NA
             # Simple fallback for shifted EMA
-            return sum(valid[:period]) / period
+            return sum(valid[:period]) / min(len(valid), period)
 
         prev_ema = self._ema_cache.get(cache_key, NA)
         if is_na(prev_ema):
             values = self._get_history(source_name, period, shift)
             valid = [v for v in values if v is not None]
-            if len(valid) < period: return NA
+            if len(valid) == 0: return NA
             ema = sum(valid) / len(valid)
         else:
             k = 2.0 / (period + 1)
@@ -2300,38 +2305,86 @@ class MQL5Interpreter:
         return sum(v * (i + 1) for i, v in enumerate(valid)) / ws
 
     def _calc_rsi(self, source_name, period, shift=0):
-        cache_key = ('rsi', source_name, period, shift)
-        if cache_key in self._bar_cache: return self._bar_cache[cache_key]
-        values = self._get_history(source_name, period + 1, shift)
-        valid = [v for v in values if v is not None]
-        if len(valid) < period + 1:
-            self._bar_cache[cache_key] = NA; return NA
-        arr = np.array(valid)
-        diffs = np.diff(arr)
-        gains = np.maximum(diffs, 0)
-        losses = np.maximum(-diffs, 0)
-        ag = float(np.mean(gains)); al = float(np.mean(losses))
-        result = 100.0 if al == 0 else 100.0 - (100.0 / (1.0 + ag / al))
-        self._bar_cache[cache_key] = result
-        return result
+        if shift > 0:
+            # For shifted RSI, compute from scratch (no smoothing state)
+            values = self._get_history(source_name, period + 1, shift)
+            valid = [v for v in values if v is not None]
+            if len(valid) < period + 1: return NA
+            gains = [max(valid[i] - valid[i-1], 0) for i in range(1, len(valid))]
+            losses = [max(valid[i-1] - valid[i], 0) for i in range(1, len(valid))]
+            ag = sum(gains) / period; al = sum(losses) / period
+            if al == 0: return 100.0
+            return 100.0 - (100.0 / (1.0 + ag / al))
+
+        series = self.series_data.get(source_name)
+        if series is None or len(series) < 2: return NA
+        current = series.get(0); prev = series.get(1)
+        if is_na(current) or is_na(prev): return NA
+
+        change = float(current) - float(prev)
+        gain = max(change, 0); loss = max(-change, 0)
+
+        gain_key = f'_rsi_gain_{source_name}_{period}'
+        loss_key = f'_rsi_loss_{source_name}_{period}'
+        prev_ag = self._ema_cache.get(gain_key, NA)
+        prev_al = self._ema_cache.get(loss_key, NA)
+
+        if is_na(prev_ag):
+            values = self._get_history(source_name, period + 1, 0)
+            valid = [v for v in values if v is not None]
+            if len(valid) < period + 1: return NA
+            gains = [max(valid[i] - valid[i-1], 0) for i in range(1, len(valid))]
+            losses = [max(valid[i-1] - valid[i], 0) for i in range(1, len(valid))]
+            ag = sum(gains) / period; al = sum(losses) / period
+        else:
+            ag = (prev_ag * (period - 1) + gain) / period
+            al = (prev_al * (period - 1) + loss) / period
+
+        self._ema_cache[gain_key] = ag
+        self._ema_cache[loss_key] = al
+
+        if al == 0: return 100.0
+        return 100.0 - (100.0 / (1.0 + ag / al))
 
     def _calc_atr(self, period, shift=0):
-        cache_key = ('atr', period, shift)
-        if cache_key in self._bar_cache: return self._bar_cache[cache_key]
-        tr_values = []
-        for i in range(period):
-            h = self.series_data['high'].get(i + shift)
-            l = self.series_data['low'].get(i + shift)
-            c_prev = self.series_data['close'].get(i + shift + 1)
-            if is_na(h) or is_na(l):
-                self._bar_cache[cache_key] = NA; return NA
-            if not is_na(c_prev):
-                tr_values.append(max(h - l, abs(h - c_prev), abs(l - c_prev)))
-            else:
-                tr_values.append(h - l)
-        result = sum(tr_values) / len(tr_values) if tr_values else NA
-        self._bar_cache[cache_key] = result
-        return result
+        if shift > 0:
+            # For shifted ATR, simple average (no state)
+            tr_values = []
+            for i in range(period):
+                h = self.series_data['high'].get(i + shift)
+                l = self.series_data['low'].get(i + shift)
+                c_prev = self.series_data['close'].get(i + shift + 1)
+                if is_na(h) or is_na(l): return NA
+                if not is_na(c_prev):
+                    tr_values.append(max(h - l, abs(h - c_prev), abs(l - c_prev)))
+                else:
+                    tr_values.append(h - l)
+            return sum(tr_values) / len(tr_values) if tr_values else NA
+
+        h = self.series_data['high'].get(0)
+        l = self.series_data['low'].get(0)
+        c_prev = self.series_data['close'].get(1)
+        if is_na(h) or is_na(l): return NA
+        tr = max(h - l, abs(h - c_prev), abs(l - c_prev)) if not is_na(c_prev) else h - l
+
+        atr_key = f'_atr_{period}'
+        prev_atr = self._ema_cache.get(atr_key, NA)
+
+        if is_na(prev_atr):
+            tr_values = []
+            for i in range(period):
+                hi = self.series_data['high'].get(i)
+                lo = self.series_data['low'].get(i)
+                cp = self.series_data['close'].get(i + 1)
+                if is_na(hi) or is_na(lo): return NA
+                tr_values.append(max(hi - lo, abs(hi - cp), abs(lo - cp)) if not is_na(cp) else hi - lo)
+            atr = sum(tr_values) / len(tr_values) if tr_values else NA
+        else:
+            atr = (prev_atr * (period - 1) + tr) / period
+
+        if not is_na(atr):
+            self._ema_cache[atr_key] = atr
+        return atr
 
 
 # ─── Public API ────────────────────────────────────────────────────────────────

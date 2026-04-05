@@ -68,23 +68,23 @@ class SMTEngine:
         # Track swing highs
         if main_ph is not None:
             self._main_highs.append((bar_index - n, main_ph))
-            if len(self._main_highs) > 10:
+            if len(self._main_highs) > 50:
                 self._main_highs.pop(0)
 
         if smt_ph is not None:
             self._smt_highs.append((bar_index - n, smt_ph))
-            if len(self._smt_highs) > 10:
+            if len(self._smt_highs) > 50:
                 self._smt_highs.pop(0)
 
         # Track swing lows
         if main_pl is not None:
             self._main_lows.append((bar_index - n, main_pl))
-            if len(self._main_lows) > 10:
+            if len(self._main_lows) > 50:
                 self._main_lows.pop(0)
 
         if smt_pl is not None:
             self._smt_lows.append((bar_index - n, smt_pl))
-            if len(self._smt_lows) > 10:
+            if len(self._smt_lows) > 50:
                 self._smt_lows.pop(0)
 
         # Check for bearish SMT divergence (swing highs)
