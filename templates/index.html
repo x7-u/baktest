@@ -1720,7 +1720,7 @@ function setDataMode(mode) {
 })();
 
 // ── MT5 Status + Symbol Autocomplete ──
-let _mt5SymbolsLoaded = false;
+var _mt5SymbolsLoaded = false;
 function checkMT5Status() {
   const dot = document.getElementById('mt5StatusDot');
   const txt = document.getElementById('mt5StatusText');
@@ -1740,10 +1740,7 @@ function checkMT5Status() {
     txt.textContent = 'MT5 not available';
   });
 }
-// Check status on page load (defer to ensure DOM is ready)
-setTimeout(checkMT5Status, 1000);
-// Also re-check when switching to MT5 mode
-setTimeout(function() { if (currentDataMode === 'mt5') loadMT5Symbols(); }, 1200);
+// Status check moved to window.onload at end of script
 
 function loadMT5Symbols() {
   if (_mt5SymbolsLoaded) return;
@@ -1761,17 +1758,7 @@ function loadMT5Symbols() {
   }).catch(() => {});
 }
 
-// Set default dates (last 6 months, deferred for DOM readiness)
-setTimeout(function() {
-  const today = new Date();
-  const sixMonthsAgo = new Date(today);
-  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-  const fmt = d => d.toISOString().split('T')[0];
-  const fromEl = document.getElementById('mt5DateFrom');
-  const toEl = document.getElementById('mt5DateTo');
-  if (fromEl && !fromEl.value) fromEl.value = fmt(sixMonthsAgo);
-  if (toEl && !toEl.value) toEl.value = fmt(today);
-}, 800);
+// Date defaults set in window.onload at end of script
 
 let currentBaseTF = 'M5';
 function setBaseTF(tf) {
@@ -1968,6 +1955,24 @@ document.addEventListener('keydown', function(e) {
     runBacktest();
   }
 });
+
+// ── Initialize on page ready ──
+function _initMT5() {
+  checkMT5Status();
+  if (currentDataMode === 'mt5') loadMT5Symbols();
+  var today = new Date();
+  var sixAgo = new Date(today);
+  sixAgo.setMonth(sixAgo.getMonth() - 6);
+  var fmt = function(d) { return d.toISOString().split('T')[0]; };
+  var f = document.getElementById('mt5DateFrom');
+  var t = document.getElementById('mt5DateTo');
+  if (f && !f.value) f.value = fmt(sixAgo);
+  if (t && !t.value) t.value = fmt(today);
+}
+// Try multiple methods to ensure it runs
+if (document.readyState === 'complete') { _initMT5(); }
+else { document.addEventListener('DOMContentLoaded', _initMT5); }
+setTimeout(_initMT5, 1500); // fallback
 </script>
 </body>
 </html>
