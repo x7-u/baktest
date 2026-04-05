@@ -102,6 +102,7 @@ class Backtester:
                  commission_per_lot: float = 0.0,
                  commission_per_trade: float = 0.0,
                  default_qty: float = 1.0,
+                 risk_pct: float = 0.0,
                  spread_pips: float = 0.0,
                  slippage_pips: float = 0.0,
                  smt_data: pd.DataFrame = None,
@@ -115,6 +116,7 @@ class Backtester:
         self.base_tf = base_tf
         self.utc_offset = utc_offset
         self.date_filters = date_filters or []
+        self.risk_pct = risk_pct
         self.source = source
         self.engine = engine
         self.initial_capital = initial_capital
@@ -161,6 +163,31 @@ class Backtester:
             return base_price - spread - slip  # sell at bid - slip
         else:
             return base_price + spread + slip  # buy at ask + slip
+
+    def _calc_risk_qty(self, entry_price, sl_price, balance):
+        """Calculate position size based on risk % of equity.
+
+        If risk_pct is set and the trade has a SL, size the position so that
+        hitting the SL loses exactly risk_pct% of current equity.
+
+        Returns qty in units, or None if risk sizing not applicable.
+        """
+        if self.risk_pct <= 0 or not sl_price:
+            return None
+
+        sl_dist = abs(entry_price - sl_price)
+        if sl_dist <= 0:
+            return None
+
+        risk_amount = balance * self.risk_pct / 100.0
+        # qty = risk_amount / (sl_distance * pnl_conversion)
+        # pnl_conversion converts price-unit P&L to account currency
+        qty = risk_amount / (sl_dist * self._pnl_conversion)
+
+        if qty <= 0:
+            return None
+
+        return qty
 
     def _calc_commission(self, entry_price, exit_price, qty):
         """Calculate total commission for a round-trip trade."""
@@ -390,7 +417,8 @@ class Backtester:
 
                     if order_type in ('limit', 'stop') and entry_price_level:
                         # Queue as pending order
-                        qty = signal.qty if signal.qty and not is_na(signal.qty) else self.default_qty
+                        risk_qty = self._calc_risk_qty(entry_price_level, signal.stop, balance)
+                        qty = risk_qty if risk_qty else (signal.qty if signal.qty and not is_na(signal.qty) else self.default_qty)
                         if qty <= 0: qty = self.default_qty
                         self.pending_entries.append(PendingEntry(
                             signal.direction, qty,
@@ -405,9 +433,18 @@ class Backtester:
                                 if tid in self.pending_exits:
                                     del self.pending_exits[tid]
                         if not self.open_positions:
-                            qty = signal.qty if signal.qty and not is_na(signal.qty) else self.default_qty
-                            if qty <= 0: qty = self.default_qty
                             entry_price = self._apply_entry_price(current_price, signal.direction)
+                            # Risk-based sizing: find SL from this signal or from an exit signal on the same bar
+                            sl_for_sizing = signal.stop if signal.stop and not is_na(signal.stop) else None
+                            if not sl_for_sizing and self.risk_pct > 0:
+                                # Look for a matching strategy.exit() signal on this bar that has a stop
+                                for other_sig in bar_signals:
+                                    if other_sig.action == 'exit' and other_sig.stop and not is_na(other_sig.stop):
+                                        sl_for_sizing = other_sig.stop
+                                        break
+                            risk_qty = self._calc_risk_qty(entry_price, sl_for_sizing, balance)
+                            qty = risk_qty if risk_qty else (signal.qty if signal.qty and not is_na(signal.qty) else self.default_qty)
+                            if qty <= 0: qty = self.default_qty
                             new_trade = Trade(signal.direction, i, entry_price, qty,
                                               signal.comment, current_date,
                                               sl_price=signal.stop, tp_price=signal.limit)

@@ -140,6 +140,7 @@ def _setup_backtest():
     commission_per_lot = float(request.form.get('commission_per_lot', 0.0))
     commission_per_trade = float(request.form.get('commission_per_trade', 0.0))
     default_qty = float(request.form.get('default_qty', 1.0))
+    risk_pct = float(request.form.get('risk_pct', 0.0))
     spread_pips = float(request.form.get('spread_pips', 0.0))
     slippage_pips = float(request.form.get('slippage_pips', 0.0))
     max_bars = int(request.form.get('max_bars', 0))
@@ -203,6 +204,7 @@ def _setup_backtest():
         commission_per_lot=commission_per_lot,
         commission_per_trade=commission_per_trade,
         default_qty=default_qty,
+        risk_pct=risk_pct,
         spread_pips=spread_pips,
         slippage_pips=slippage_pips,
         smt_data=df_smt,
@@ -435,7 +437,7 @@ def _run_single_backtest(df, script, engine, initial_capital, commission,
                         initial_capital=initial_capital, commission_pct=commission,
                         commission_per_lot=commission_per_lot,
                         commission_per_trade=commission_per_trade,
-                        default_qty=default_qty, spread_pips=spread_pips,
+                        default_qty=default_qty, risk_pct=risk_pct, spread_pips=spread_pips,
                         slippage_pips=slippage_pips, smt_data=smt_data)
         r = bt.run()
         return r['metrics'].get(metric_name, 0) or 0
@@ -544,7 +546,7 @@ def run_optimize():
                                               initial_capital=initial_capital, commission_pct=commission,
                                               commission_per_lot=commission_per_lot,
                                               commission_per_trade=commission_per_trade,
-                                              default_qty=default_qty, spread_pips=spread_pips,
+                                              default_qty=default_qty, risk_pct=risk_pct, spread_pips=spread_pips,
                                               slippage_pips=slippage_pips, smt_data=train_smt)
                         r = bt_train.run()
                         m_val = r['metrics'].get(metric_name, 0) or 0
@@ -564,7 +566,7 @@ def run_optimize():
                                       initial_capital=initial_capital, commission_pct=commission,
                                       commission_per_lot=commission_per_lot,
                                       commission_per_trade=commission_per_trade,
-                                      default_qty=default_qty, spread_pips=spread_pips,
+                                      default_qty=default_qty, risk_pct=risk_pct, spread_pips=spread_pips,
                                       slippage_pips=slippage_pips, smt_data=test_smt)
                 test_r = bt_test.run()
                 test_m = test_r['metrics']
