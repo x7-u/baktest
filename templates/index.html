@@ -474,6 +474,7 @@ textarea.pine-editor:focus { border-color: var(--blue); }
         <div class="icon">&#128200;</div>
         <p>Drop MetaTrader CSV here or click to browse</p>
         <div class="filename" id="fileName"></div>
+        <div id="recentFiles" style="margin-top:6px;font-size:10px;color:var(--text-dim);"></div>
       </div>
       <div style="margin-top:8px;">
         <label style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;">Base Timeframe</label>
@@ -510,6 +511,11 @@ textarea.pine-editor:focus { border-color: var(--blue); }
           <button class="bar-chip" id="btnMql5" onclick="setEngine('mql5')">MQL5</button>
         </div>
       </div>
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
+        <label for="scriptFileInput" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 12px;font-size:11px;color:var(--text-dim);cursor:pointer;white-space:nowrap;">Upload Script</label>
+        <input type="file" id="scriptFileInput" accept=".txt,.pine,.mq5,.mql5" style="display:none;">
+        <span id="scriptFileName" style="font-size:11px;color:var(--green);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
+      </div>
       <div class="editor-wrap" style="flex:1;">
         <textarea class="pine-editor" id="scriptEditor" spellcheck="false" placeholder="// Paste your Pine Script strategy here...
 //@version=5
@@ -528,6 +534,13 @@ if ta.crossunder(fast, slow)
 
     <div class="sidebar-section">
       <h3>Settings</h3>
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:10px;">
+        <select id="profileSelect" onchange="loadProfile(this.value)" style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 8px;font-size:12px;">
+          <option value="">Default</option>
+        </select>
+        <button onclick="saveProfile()" style="background:var(--blue-dim);color:var(--blue);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:11px;cursor:pointer;white-space:nowrap;">Save</button>
+        <button onclick="deleteProfile()" style="background:var(--red-dim);color:var(--red);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:11px;cursor:pointer;white-space:nowrap;">Del</button>
+      </div>
       <div class="settings-grid">
         <div class="field">
           <label>Starting Balance ($)</label>
@@ -657,7 +670,10 @@ fileDrop.ondrop = e => {
   }
 };
 csvFile.onchange = () => {
-  if (csvFile.files.length) fileName.textContent = csvFile.files[0].name;
+  if (csvFile.files.length) {
+    fileName.textContent = csvFile.files[0].name;
+    trackRecentFile(csvFile.files[0].name);
+  }
 };
 
 // SMT file upload handling
@@ -677,8 +693,30 @@ smtFileDrop.ondrop = e => {
   }
 };
 smtFile.onchange = () => {
-  if (smtFile.files.length) smtFileName.textContent = smtFile.files[0].name;
+  if (smtFile.files.length) {
+    smtFileName.textContent = smtFile.files[0].name;
+    trackRecentFile(smtFile.files[0].name);
+  }
 };
+
+// Track recently used files
+function trackRecentFile(name) {
+  let recent = JSON.parse(localStorage.getItem('_bt_recentFiles') || '[]');
+  recent = recent.filter(f => f !== name);
+  recent.unshift(name);
+  if (recent.length > 5) recent = recent.slice(0, 5);
+  localStorage.setItem('_bt_recentFiles', JSON.stringify(recent));
+  renderRecentFiles();
+}
+function renderRecentFiles() {
+  const recent = JSON.parse(localStorage.getItem('_bt_recentFiles') || '[]');
+  const el = document.getElementById('recentFiles');
+  if (!el || recent.length === 0) return;
+  el.innerHTML = '<span style="color:var(--text-dim);">Recent: </span>' + recent.map(f =>
+    '<span style="color:var(--cyan);margin-left:4px;">' + f + '</span>'
+  ).join(', ');
+}
+renderRecentFiles();
 
 let extraSymbolCount = 0;
 function addSymbolUpload() {
@@ -833,6 +871,7 @@ function createPriceChart(ohlc, markers, smtOhlc) {
     });
     priceChart.priceScale('smt').applyOptions({
       scaleMargins: { top: 0.1, bottom: 0.1 },
+      autoScale: true,
     });
     const smtData = smtOhlc.map((d, i) => {
       const time = i < candleData.length ? candleData[i].time : null;
@@ -1518,6 +1557,64 @@ function saveDateFilters() {
   } catch(e) {}
 })();
 
+// ── Profile System ──
+const PROFILE_FIELDS = ['initialCapital', 'commission', 'defaultQty', 'spreadPips', 'slippagePips', 'commissionPerLot', 'utcOffset'];
+
+function getProfileData() {
+  const data = { engine: currentEngine, baseTF: currentBaseTF, maxBars: document.getElementById('maxBars').value };
+  PROFILE_FIELDS.forEach(id => { data[id] = document.getElementById(id).value; });
+  return data;
+}
+
+function applyProfileData(data) {
+  if (data.engine) setEngine(data.engine);
+  if (data.baseTF) setBaseTF(data.baseTF);
+  if (data.maxBars) { document.getElementById('maxBars').value = data.maxBars; }
+  PROFILE_FIELDS.forEach(id => {
+    if (data[id] !== undefined) document.getElementById(id).value = data[id];
+  });
+}
+
+function saveProfile() {
+  const name = prompt('Profile name:');
+  if (!name) return;
+  const profiles = JSON.parse(localStorage.getItem('_bt_profiles') || '{}');
+  profiles[name] = getProfileData();
+  localStorage.setItem('_bt_profiles', JSON.stringify(profiles));
+  renderProfiles();
+  document.getElementById('profileSelect').value = name;
+}
+
+function loadProfile(name) {
+  if (!name) return; // Default selected
+  const profiles = JSON.parse(localStorage.getItem('_bt_profiles') || '{}');
+  if (profiles[name]) applyProfileData(profiles[name]);
+}
+
+function deleteProfile() {
+  const sel = document.getElementById('profileSelect');
+  const name = sel.value;
+  if (!name) return;
+  const profiles = JSON.parse(localStorage.getItem('_bt_profiles') || '{}');
+  delete profiles[name];
+  localStorage.setItem('_bt_profiles', JSON.stringify(profiles));
+  renderProfiles();
+}
+
+function renderProfiles() {
+  const profiles = JSON.parse(localStorage.getItem('_bt_profiles') || '{}');
+  const sel = document.getElementById('profileSelect');
+  const current = sel.value;
+  sel.innerHTML = '<option value="">Default</option>';
+  Object.keys(profiles).forEach(name => {
+    const opt = document.createElement('option');
+    opt.value = name; opt.textContent = name;
+    sel.appendChild(opt);
+  });
+  sel.value = current;
+}
+renderProfiles();
+
 let currentBaseTF = 'M5';
 function setBaseTF(tf) {
   currentBaseTF = tf;
@@ -1614,6 +1711,27 @@ function jumpToLine(lineNum) {
     });
   });
 })();
+
+// Script file upload
+document.getElementById('scriptFileInput').addEventListener('change', function() {
+  const file = this.files[0];
+  if (!file) return;
+  document.getElementById('scriptFileName').textContent = file.name;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    document.getElementById('scriptEditor').value = e.target.result;
+    // Auto-detect engine from extension
+    if (file.name.endsWith('.mq5') || file.name.endsWith('.mql5')) {
+      setEngine('mql5');
+    } else if (file.name.endsWith('.pine')) {
+      setEngine('pine');
+    }
+    // Trigger auto-save
+    const key = currentEngine === 'mql5' ? '_bt_mql5_script' : '_bt_pine_script';
+    localStorage.setItem(key, e.target.result);
+  };
+  reader.readAsText(file);
+});
 
 // ── Walk-Forward Optimization ──
 async function runOptimization() {
