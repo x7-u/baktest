@@ -431,7 +431,7 @@ def _apply_params(script, params, engine):
 
 def _run_single_backtest(df, script, engine, initial_capital, commission,
                           commission_per_lot, commission_per_trade, default_qty,
-                          spread_pips, slippage_pips, smt_data, metric_name):
+                          risk_pct_val, spread_pips, slippage_pips, smt_data, metric_name):
     """Run a single backtest and return the optimization metric value.
     Designed to be called from ProcessPoolExecutor."""
     try:
@@ -439,7 +439,7 @@ def _run_single_backtest(df, script, engine, initial_capital, commission,
                         initial_capital=initial_capital, commission_pct=commission,
                         commission_per_lot=commission_per_lot,
                         commission_per_trade=commission_per_trade,
-                        default_qty=default_qty, risk_pct=risk_pct, spread_pips=spread_pips,
+                        default_qty=default_qty, risk_pct=risk_pct_val, spread_pips=spread_pips,
                         slippage_pips=slippage_pips, smt_data=smt_data)
         r = bt.run()
         return r['metrics'].get(metric_name, 0) or 0
@@ -525,8 +525,8 @@ def run_optimize():
                         future = executor.submit(
                             _run_single_backtest, train_df, mod_script, engine,
                             initial_capital, commission, commission_per_lot,
-                            commission_per_trade, default_qty, spread_pips,
-                            slippage_pips, train_smt, metric_name)
+                            commission_per_trade, default_qty, risk_pct,
+                            spread_pips, slippage_pips, train_smt, metric_name)
                         futures[future] = params
                     for future in as_completed(futures):
                         try:
