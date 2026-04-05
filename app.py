@@ -309,6 +309,7 @@ def mt5_fetch_and_backtest():
         commission_per_lot = float(request.form.get('commission_per_lot', 0.0))
         commission_per_trade = float(request.form.get('commission_per_trade', 0.0))
         default_qty = float(request.form.get('default_qty', 1.0))
+        risk_pct = float(request.form.get('risk_pct', 0.0))
         spread_pips = float(request.form.get('spread_pips', 0.0))
         slippage_pips = float(request.form.get('slippage_pips', 0.0))
         utc_offset = int(request.form.get('utc_offset', 0))
