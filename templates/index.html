@@ -1736,7 +1736,9 @@ function checkMT5Status() {
   });
 }
 // Check status on page load (defer to ensure DOM is ready)
-setTimeout(checkMT5Status, 500);
+setTimeout(checkMT5Status, 1000);
+// Also re-check when switching to MT5 mode
+setTimeout(function() { if (currentDataMode === 'mt5') loadMT5Symbols(); }, 1200);
 
 function loadMT5Symbols() {
   if (_mt5SymbolsLoaded) return;
@@ -1754,7 +1756,7 @@ function loadMT5Symbols() {
   }).catch(() => {});
 }
 
-// Set default dates (last 6 months, deferred for DOM)
+// Set default dates (last 6 months, deferred for DOM readiness)
 setTimeout(function() {
   const today = new Date();
   const sixMonthsAgo = new Date(today);
@@ -1764,7 +1766,7 @@ setTimeout(function() {
   const toEl = document.getElementById('mt5DateTo');
   if (fromEl && !fromEl.value) fromEl.value = fmt(sixMonthsAgo);
   if (toEl && !toEl.value) toEl.value = fmt(today);
-}, 100);
+}, 800);
 
 let currentBaseTF = 'M5';
 function setBaseTF(tf) {
