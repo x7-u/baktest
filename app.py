@@ -235,6 +235,159 @@ def run_backtest():
         return jsonify({'error': f'Backtest error: {str(e)}'}), 500
 
 
+# ─── MetaTrader 5 Routes ──────────────────────────────────────────────────────
+
+@app.route('/api/mt5/status')
+def mt5_status():
+    """Check if MT5 terminal is available."""
+    try:
+        from mt5_source import MT5DataSource
+        src = MT5DataSource()
+        ok = src.initialize()
+        if ok:
+            src.shutdown()
+            return jsonify({'connected': True})
+        return jsonify({'connected': False, 'error': 'MT5 terminal not running'})
+    except ImportError:
+        return jsonify({'connected': False, 'error': 'MetaTrader5 package not installed'})
+    except Exception as e:
+        return jsonify({'connected': False, 'error': str(e)})
+
+
+@app.route('/api/mt5/symbols')
+def mt5_symbols():
+    """Get available symbols from MT5 broker."""
+    try:
+        from mt5_source import MT5DataSource
+        src = MT5DataSource()
+        if not src.initialize():
+            return jsonify({'symbols': [], 'error': 'MT5 terminal not running'})
+        try:
+            filter_text = request.args.get('filter', '')
+            symbols = src.list_symbols(filter_text)
+            return jsonify({'symbols': symbols})
+        finally:
+            src.shutdown()
+    except ImportError:
+        return jsonify({'symbols': [], 'error': 'MetaTrader5 package not installed'})
+    except Exception as e:
+        return jsonify({'symbols': [], 'error': str(e)})
+
+
+@app.route('/api/mt5/fetch', methods=['POST'])
+def mt5_fetch_and_backtest():
+    """Fetch data from MT5 and run backtest."""
+    try:
+        from mt5_source import MT5DataSource
+        from datetime import datetime as _dt
+
+        engine = request.form.get('engine', 'pine')
+        label = ENGINE_LABELS.get(engine, 'Pine Script')
+        script = request.form.get('script', '')
+        if not script.strip():
+            return jsonify({'error': f'No {label} script provided'}), 400
+
+        symbol = request.form.get('symbol', '').strip()
+        if not symbol:
+            return jsonify({'error': 'No symbol specified'}), 400
+
+        tf_string = request.form.get('base_tf', 'M5')
+        date_from_str = request.form.get('date_from', '')
+        date_to_str = request.form.get('date_to', '')
+
+        try:
+            date_from = _dt.strptime(date_from_str, '%Y-%m-%d')
+            date_to = _dt.strptime(date_to_str, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
+        except (ValueError, TypeError):
+            return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD.'}), 400
+
+        # Parse settings
+        initial_capital = float(request.form.get('initial_capital', 10000))
+        commission = float(request.form.get('commission', 0.0))
+        commission_per_lot = float(request.form.get('commission_per_lot', 0.0))
+        commission_per_trade = float(request.form.get('commission_per_trade', 0.0))
+        default_qty = float(request.form.get('default_qty', 1.0))
+        spread_pips = float(request.form.get('spread_pips', 0.0))
+        slippage_pips = float(request.form.get('slippage_pips', 0.0))
+        utc_offset = int(request.form.get('utc_offset', 0))
+        max_bars = int(request.form.get('max_bars', 0))
+        date_filters = json.loads(request.form.get('date_filters', '[]'))
+
+        # Validate
+        if initial_capital <= 0:
+            return jsonify({'error': 'Starting balance must be positive'}), 400
+        if default_qty <= 0:
+            return jsonify({'error': 'Default quantity must be positive'}), 400
+
+        # Fetch from MT5
+        src = MT5DataSource()
+        if not src.initialize():
+            return jsonify({'error': 'MetaTrader 5 terminal is not running. Please start MT5 and log in.'}), 503
+        try:
+            df = src.fetch_bars(symbol, tf_string, date_from, date_to)
+        except (ValueError, RuntimeError) as e:
+            return jsonify({'error': str(e)}), 400
+        finally:
+            src.shutdown()
+
+        if max_bars > 0 and len(df) > max_bars:
+            df = df.tail(max_bars).reset_index(drop=True)
+        if len(df) < 2:
+            return jsonify({'error': 'Insufficient data fetched (need at least 2 bars)'}), 400
+
+        # Optional SMT symbol fetch
+        df_smt = None
+        smt_symbol = request.form.get('smt_symbol', '').strip()
+        if smt_symbol:
+            src2 = MT5DataSource()
+            if src2.initialize():
+                try:
+                    df_smt = src2.fetch_bars(smt_symbol, tf_string, date_from, date_to)
+                    if max_bars > 0 and len(df_smt) > max_bars:
+                        df_smt = df_smt.tail(max_bars).reset_index(drop=True)
+                    min_len = min(len(df), len(df_smt))
+                    df = df.tail(min_len).reset_index(drop=True)
+                    df_smt = df_smt.tail(min_len).reset_index(drop=True)
+                except Exception:
+                    df_smt = None
+                finally:
+                    src2.shutdown()
+
+        # Run backtest (same path as CSV)
+        bt = Backtester(
+            data=df, source=script, engine=engine,
+            initial_capital=initial_capital,
+            commission_pct=commission,
+            commission_per_lot=commission_per_lot,
+            commission_per_trade=commission_per_trade,
+            default_qty=default_qty,
+            spread_pips=spread_pips,
+            slippage_pips=slippage_pips,
+            smt_data=df_smt,
+            base_tf=tf_string,
+            utc_offset=utc_offset,
+            date_filters=date_filters,
+        )
+        results = bt.run()
+
+        interp_name = type(bt.interpreter).__name__
+        results['engine'] = 'cython' if 'Fast' in interp_name else 'python'
+        results['engine_type'] = engine
+        results['data_source'] = f'MT5: {symbol} ({tf_string})'
+
+        return jsonify(sanitize_for_json(results))
+
+    except ImportError:
+        return jsonify({'error': 'MetaTrader5 package not installed. Run: pip install MetaTrader5'}), 500
+    except SyntaxError as e:
+        return jsonify({'error': f'Syntax error: {str(e)}'}), 400
+    except ValueError as e:
+        return jsonify({'error': f'Data error: {str(e)}'}), 400
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': f'Backtest error: {str(e)}'}), 500
+
+
 @app.route('/api/backtest-stream', methods=['POST'])
 def run_backtest_stream():
     try:

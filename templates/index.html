@@ -468,13 +468,45 @@ textarea.pine-editor:focus { border-color: var(--blue); }
 <div class="main">
   <div class="sidebar">
     <div class="sidebar-section">
-      <h3>Market Data</h3>
-      <div class="file-drop" id="fileDrop">
-        <input type="file" id="csvFile" accept=".csv">
-        <div class="icon">&#128200;</div>
-        <p>Drop MetaTrader CSV here or click to browse</p>
-        <div class="filename" id="fileName"></div>
-        <div id="recentFiles" style="margin-top:6px;font-size:10px;color:var(--text-dim);"></div>
+      <h3 style="display:flex;align-items:center;justify-content:space-between;">
+        Market Data
+        <span id="mt5Status" style="font-size:10px;font-weight:400;display:none;"></span>
+      </h3>
+      <div class="bar-chips" style="margin-bottom:8px;">
+        <button class="bar-chip active" id="btnDataCSV" onclick="setDataMode('csv')">Upload CSV</button>
+        <button class="bar-chip" id="btnDataMT5" onclick="setDataMode('mt5')">Fetch from MT5</button>
+      </div>
+      <div id="dataCSVPanel">
+        <div class="file-drop" id="fileDrop">
+          <input type="file" id="csvFile" accept=".csv">
+          <div class="icon">&#128200;</div>
+          <p>Drop MetaTrader CSV here or click to browse</p>
+          <div class="filename" id="fileName"></div>
+          <div id="recentFiles" style="margin-top:6px;font-size:10px;color:var(--text-dim);"></div>
+        </div>
+      </div>
+      <div id="dataMT5Panel" style="display:none;">
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <div class="field">
+            <label>Symbol</label>
+            <input type="text" id="mt5Symbol" placeholder="e.g. EURUSD, NZDJPY" list="mt5SymbolList" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px 12px;font-size:13px;">
+            <datalist id="mt5SymbolList"></datalist>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <div class="field">
+              <label>From Date</label>
+              <input type="date" id="mt5DateFrom" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px 12px;font-size:13px;">
+            </div>
+            <div class="field">
+              <label>To Date</label>
+              <input type="date" id="mt5DateTo" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px 12px;font-size:13px;">
+            </div>
+          </div>
+          <div class="field">
+            <label>SMT Symbol (optional)</label>
+            <input type="text" id="mt5SMTSymbol" placeholder="e.g. USDJPY" list="mt5SymbolList" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px 12px;font-size:13px;">
+          </div>
+        </div>
       </div>
       <div style="margin-top:8px;">
         <label style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;">Base Timeframe</label>
@@ -1302,22 +1334,24 @@ function setMaxBarsCustom(val) {
 
 async function runBacktest() {
   const btn = document.getElementById('btnRun');
-  const file = document.getElementById('csvFile').files[0];
   const script = document.getElementById('scriptEditor').value;
+  const isMT5Mode = currentDataMode === 'mt5';
 
-  if (!file) {
-    alert('Please upload a CSV file first.');
-    return;
+  if (!isMT5Mode) {
+    const file = document.getElementById('csvFile').files[0];
+    if (!file) { alert('Please upload a CSV file first.'); return; }
+  } else {
+    const sym = document.getElementById('mt5Symbol').value.trim();
+    if (!sym) { alert('Please enter a symbol (e.g. EURUSD).'); return; }
+    if (!document.getElementById('mt5DateFrom').value || !document.getElementById('mt5DateTo').value) {
+      alert('Please select a date range.'); return;
+    }
   }
-  if (!script.trim()) {
-    alert('Please enter a strategy script.');
-    return;
-  }
+  if (!script.trim()) { alert('Please enter a strategy script.'); return; }
 
   btn.disabled = true;
   btn.classList.add('running');
   btn.innerHTML = '<span class="spinner"></span> Running...';
-  // Show cancel button
   const cancelBtn = document.getElementById('btnCancel');
   cancelBtn.style.display = 'block';
   window._backtestAbort = new AbortController();
@@ -1325,7 +1359,6 @@ async function runBacktest() {
   destroyCharts();
 
   const formData = new FormData();
-  formData.append('csv_file', file);
   formData.append('script', script);
   formData.append('engine', currentEngine);
   formData.append('base_tf', currentBaseTF);
@@ -1338,9 +1371,21 @@ async function runBacktest() {
   formData.append('slippage_pips', document.getElementById('slippagePips').value);
   formData.append('utc_offset', document.getElementById('utcOffset').value);
   formData.append('max_bars', document.getElementById('maxBars').value);
-  const smtFileEl = document.getElementById('smtFile');
-  if (smtFileEl.files.length > 0) {
-    formData.append('smt_file', smtFileEl.files[0]);
+
+  // Data source specific fields
+  let backtestUrl = '/api/backtest-stream';
+  if (isMT5Mode) {
+    formData.append('symbol', document.getElementById('mt5Symbol').value.trim());
+    formData.append('date_from', document.getElementById('mt5DateFrom').value);
+    formData.append('date_to', document.getElementById('mt5DateTo').value);
+    const smtSym = document.getElementById('mt5SMTSymbol').value.trim();
+    if (smtSym) formData.append('smt_symbol', smtSym);
+    backtestUrl = '/api/mt5/fetch';
+  } else {
+    const file = document.getElementById('csvFile').files[0];
+    formData.append('csv_file', file);
+    const smtFileEl = document.getElementById('smtFile');
+    if (smtFileEl.files.length > 0) formData.append('smt_file', smtFileEl.files[0]);
   }
   // Extra correlation symbols
   for (let i = 2; i <= extraSymbolCount + 1; i++) {
@@ -1359,8 +1404,26 @@ async function runBacktest() {
   progText.textContent = '0%';
 
   try {
-    // Use SSE for streaming progress
-    const resp = await fetch('/api/backtest-stream', { method: 'POST', body: formData, signal: window._backtestAbort.signal });
+    const resp = await fetch(backtestUrl, { method: 'POST', body: formData, signal: window._backtestAbort.signal });
+
+    // MT5 fetch returns plain JSON (not streaming)
+    if (isMT5Mode) {
+      const data = await resp.json();
+      progBar.style.width = '100%';
+      progText.textContent = 'Complete!';
+      if (data.error) {
+        const content = document.getElementById('content');
+        const results = document.getElementById('results');
+        const empty = document.getElementById('emptyState');
+        content.classList.remove('empty');
+        empty.style.display = 'none';
+        results.style.display = 'block';
+        results.innerHTML = `<div class="error-box">${data.error}</div>`;
+      } else {
+        renderResults(data);
+      }
+    } else {
+    // CSV mode: SSE streaming progress
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -1401,6 +1464,7 @@ async function runBacktest() {
         }
       }
     }
+    } // end CSV else block
   } catch (err) {
     if (err.name === 'AbortError') {
       progText.textContent = 'Cancelled';
@@ -1631,6 +1695,65 @@ function renderProfiles() {
   sel.value = current;
 }
 renderProfiles();
+
+// ── Data Mode Toggle (CSV / MT5) ──
+let currentDataMode = 'csv';
+function setDataMode(mode) {
+  currentDataMode = mode;
+  document.getElementById('dataCSVPanel').style.display = mode === 'csv' ? 'block' : 'none';
+  document.getElementById('dataMT5Panel').style.display = mode === 'mt5' ? 'block' : 'none';
+  document.getElementById('btnDataCSV').classList.toggle('active', mode === 'csv');
+  document.getElementById('btnDataMT5').classList.toggle('active', mode === 'mt5');
+  localStorage.setItem('_bt_dataMode', mode);
+  if (mode === 'mt5') loadMT5Symbols();
+}
+// Restore saved mode
+(function() {
+  const saved = localStorage.getItem('_bt_dataMode');
+  if (saved === 'mt5') setDataMode('mt5');
+})();
+
+// ── MT5 Symbol Autocomplete ──
+let _mt5SymbolsLoaded = false;
+function loadMT5Symbols() {
+  if (_mt5SymbolsLoaded) return;
+  fetch('/api/mt5/symbols').then(r => r.json()).then(data => {
+    if (data.symbols && data.symbols.length > 0) {
+      const dl = document.getElementById('mt5SymbolList');
+      dl.innerHTML = '';
+      data.symbols.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s;
+        dl.appendChild(opt);
+      });
+      _mt5SymbolsLoaded = true;
+      // Show connected status
+      const status = document.getElementById('mt5Status');
+      status.style.display = 'inline';
+      status.innerHTML = '<span style="color:var(--green);">&#9679;</span> MT5 Connected';
+    } else {
+      const status = document.getElementById('mt5Status');
+      status.style.display = 'inline';
+      status.innerHTML = '<span style="color:var(--red);">&#9679;</span> MT5 Offline';
+    }
+  }).catch(() => {
+    const status = document.getElementById('mt5Status');
+    status.style.display = 'inline';
+    status.innerHTML = '<span style="color:var(--red);">&#9679;</span> MT5 Offline';
+  });
+}
+
+// Set default dates (last 6 months)
+(function() {
+  const today = new Date();
+  const sixMonthsAgo = new Date(today);
+  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+  const fmt = d => d.toISOString().split('T')[0];
+  const fromEl = document.getElementById('mt5DateFrom');
+  const toEl = document.getElementById('mt5DateTo');
+  if (fromEl && !fromEl.value) fromEl.value = fmt(sixMonthsAgo);
+  if (toEl && !toEl.value) toEl.value = fmt(today);
+})();
 
 let currentBaseTF = 'M5';
 function setBaseTF(tf) {
