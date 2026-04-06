@@ -1160,12 +1160,29 @@ function renderResults(data) {
       <div style="font-size:16px;font-weight:700;color:${data.funded.passed ? 'var(--green)' : 'var(--red)'};">
         ${data.funded.passed ? '&#10004; FUNDED ACCOUNT: PASSED' : '&#10008; FUNDED ACCOUNT: FAILED'}
       </div>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px;font-size:12px;">
-        <div><span style="color:var(--text-dim);">Profit Target</span><br><span style="color:${data.funded.passed_target ? 'var(--green)' : 'var(--red)'}">${data.funded.net_pct}% / ${data.funded.target_pct}%</span></div>
-        <div><span style="color:var(--text-dim);">Max Drawdown</span><br><span style="color:${data.funded.passed_dd ? 'var(--green)' : 'var(--red)'}">${data.funded.actual_dd}% / ${data.funded.max_dd_pct}%</span></div>
-        <div><span style="color:var(--text-dim);">Daily DD</span><br><span style="color:var(--text-dim);">${data.funded.daily_dd_pct}% limit</span></div>
-        <div><span style="color:var(--text-dim);">Trading Days</span><br><span style="color:${data.funded.passed_min_days ? 'var(--green)' : 'var(--red)'}">${data.funded.trading_days} / ${data.funded.min_days}</span></div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px;font-size:12px;">
+        <div><span style="color:var(--text-dim);">Profit Target</span><br><span style="color:${data.funded.passed_target ? 'var(--green)' : 'var(--red)'}; font-weight:600;">${data.funded.net_pct}% / ${data.funded.target_pct}%</span></div>
+        <div><span style="color:var(--text-dim);">Max Drawdown</span><br><span style="color:${data.funded.passed_dd ? 'var(--green)' : 'var(--red)'}; font-weight:600;">${data.funded.actual_dd}% / ${data.funded.max_dd_pct}%</span></div>
+        <div><span style="color:var(--text-dim);">Daily DD Limit</span><br><span style="font-weight:600;">${data.funded.daily_dd_pct}%</span></div>
+        <div><span style="color:var(--text-dim);">Trading Days</span><br><span style="color:${data.funded.passed_min_days ? 'var(--green)' : 'var(--red)'}; font-weight:600;">${data.funded.trading_days} / ${data.funded.min_days}</span></div>
       </div>
+      ${data.funded.target_hit_date ? `
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid ${data.funded.passed ? 'var(--green)' : 'var(--red)'}40;">
+        <div style="font-size:13px;font-weight:600;color:var(--green);margin-bottom:6px;">&#127942; Target Hit</div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:12px;">
+          <div><span style="color:var(--text-dim);">Date</span><br><span style="font-weight:600;">${data.funded.target_hit_date}</span></div>
+          <div><span style="color:var(--text-dim);">After Trade #</span><br><span style="font-weight:600;">${data.funded.target_hit_trade}</span></div>
+          <div><span style="color:var(--text-dim);">Trading Days</span><br><span style="font-weight:600;">${data.funded.target_hit_days}</span></div>
+          <div><span style="color:var(--text-dim);">Calendar Days</span><br><span style="font-weight:600;">${data.funded.duration_days != null ? data.funded.duration_days + ' days' : '-'}</span></div>
+        </div>
+      </div>
+      ` : '<div style="margin-top:8px;font-size:11px;color:var(--text-dim);">Target not reached during backtest period.</div>'}
+      ${data.funded.dd_breach_date ? `
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--red)40;">
+        <div style="font-size:13px;font-weight:600;color:var(--red);margin-bottom:4px;">&#9888; Drawdown Breach</div>
+        <div style="font-size:12px;">Breached on <strong>${data.funded.dd_breach_date}</strong> at trade #${data.funded.dd_breach_trade}</div>
+      </div>
+      ` : ''}
     </div>
     ` : ''}
 

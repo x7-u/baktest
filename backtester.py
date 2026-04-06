@@ -679,7 +679,57 @@ class Backtester:
             trading_days = len(trade_dates)
             passed_min_days = trading_days >= min_days
 
+            # Track WHEN the target was first hit
+            target_hit_date = None
+            target_hit_trade = None
+            target_hit_days = None
+            dd_breach_date = None
+            dd_breach_trade = None
+
+            running_pnl = 0
+            target_amount = self.initial_capital * target_pct / 100
+            dd_limit = self.initial_capital * max_dd_pct / 100
+            running_peak = self.initial_capital
+            days_seen = set()
+            breached = False
+
+            for i, t in enumerate(filtered_trades):
+                running_pnl += t.pnl
+                current_equity = self.initial_capital + running_pnl
+                running_peak = max(running_peak, current_equity)
+                current_dd = running_peak - current_equity
+
+                if t.entry_date:
+                    days_seen.add(str(t.entry_date)[:10])
+
+                # Check if target hit for the first time
+                if target_hit_date is None and running_pnl >= target_amount:
+                    target_hit_date = str(t.exit_date)[:10] if t.exit_date else str(t.entry_date)[:10] if t.entry_date else None
+                    target_hit_trade = i + 1
+                    target_hit_days = len(days_seen)
+
+                # Check if DD breached
+                if not breached and current_dd >= dd_limit:
+                    breached = True
+                    dd_breach_date = str(t.exit_date)[:10] if t.exit_date else str(t.entry_date)[:10] if t.entry_date else None
+                    dd_breach_trade = i + 1
+
             passed = passed_target and passed_dd and passed_min_days
+            # If DD was breached before target hit, it's a fail regardless
+            if breached and (target_hit_trade is None or (dd_breach_trade and dd_breach_trade <= (target_hit_trade or 9999))):
+                passed = False
+
+            # Calculate duration from first trade to target hit
+            first_date = str(filtered_trades[0].entry_date)[:10] if filtered_trades and filtered_trades[0].entry_date else None
+            duration_days = None
+            if first_date and target_hit_date:
+                try:
+                    import pandas as _pd
+                    d1 = _pd.Timestamp(first_date)
+                    d2 = _pd.Timestamp(target_hit_date)
+                    duration_days = (d2 - d1).days
+                except Exception:
+                    pass
 
             funded = {
                 'enabled': True,
@@ -694,6 +744,13 @@ class Backtester:
                 'min_days': min_days,
                 'trading_days': trading_days,
                 'passed_min_days': passed_min_days,
+                'target_hit_date': target_hit_date,
+                'target_hit_trade': target_hit_trade,
+                'target_hit_days': target_hit_days,
+                'duration_days': duration_days,
+                'dd_breach_date': dd_breach_date,
+                'dd_breach_trade': dd_breach_trade,
+                'first_trade_date': first_date,
             }
 
         return {
