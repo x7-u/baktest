@@ -448,13 +448,14 @@ class Backtester:
                     entry_price_level = getattr(signal, 'entry_price', None)
 
                     if order_type in ('limit', 'stop') and entry_price_level:
-                        # Queue as pending order
-                        signal_qty = signal.qty if signal.qty and not is_na(signal.qty) else None
-                        if signal_qty and signal_qty > 0:
-                            qty = signal_qty  # EA calculated its own size
+                        # Queue as pending order — risk % takes priority when set
+                        risk_qty = self._calc_risk_qty(entry_price_level, signal.stop, balance) if self.risk_pct > 0 else None
+                        if risk_qty:
+                            qty = risk_qty
+                        elif signal.qty and not is_na(signal.qty) and signal.qty > 0:
+                            qty = signal.qty
                         else:
-                            risk_qty = self._calc_risk_qty(entry_price_level, signal.stop, balance)
-                            qty = risk_qty if risk_qty else self.default_qty
+                            qty = self.default_qty
                         if qty <= 0: qty = self.default_qty
                         self.pending_entries.append(PendingEntry(
                             signal.direction, qty,
@@ -478,12 +479,14 @@ class Backtester:
                                     if other_sig.action == 'exit' and other_sig.stop and not is_na(other_sig.stop):
                                         sl_for_sizing = other_sig.stop
                                         break
-                            signal_qty = signal.qty if signal.qty and not is_na(signal.qty) else None
-                            if signal_qty and signal_qty > 0:
-                                qty = signal_qty  # EA calculated its own size
+                            # Risk % takes priority when set; otherwise use signal qty or default
+                            risk_qty = self._calc_risk_qty(entry_price, sl_for_sizing, balance) if self.risk_pct > 0 else None
+                            if risk_qty:
+                                qty = risk_qty
+                            elif signal.qty and not is_na(signal.qty) and signal.qty > 0:
+                                qty = signal.qty
                             else:
-                                risk_qty = self._calc_risk_qty(entry_price, sl_for_sizing, balance)
-                                qty = risk_qty if risk_qty else self.default_qty
+                                qty = self.default_qty
                             if qty <= 0: qty = self.default_qty
                             new_trade = Trade(signal.direction, i, entry_price, qty,
                                               signal.comment, current_date,
