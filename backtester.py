@@ -486,10 +486,25 @@ class Backtester:
 
                 elif signal.action == 'exit':
                     for tid in self.open_positions:
-                        self.open_positions[tid].sl_price = signal.stop
-                        self.open_positions[tid].tp_price = signal.limit
+                        pos = self.open_positions[tid]
+                        sl_val = signal.stop
+                        tp_val = signal.limit
+
+                        # Sanity check: ensure SL/TP are on the correct side of entry
+                        if sl_val and tp_val and not is_na(sl_val) and not is_na(tp_val):
+                            if pos.direction == 'long':
+                                # Long: SL should be below entry, TP above
+                                if sl_val > pos.entry_price and tp_val < pos.entry_price:
+                                    sl_val, tp_val = tp_val, sl_val  # swap
+                            else:
+                                # Short: SL should be above entry, TP below
+                                if sl_val < pos.entry_price and tp_val > pos.entry_price:
+                                    sl_val, tp_val = tp_val, sl_val  # swap
+
+                        pos.sl_price = sl_val
+                        pos.tp_price = tp_val
                         self.pending_exits[tid] = PendingExit(
-                            stop=signal.stop, limit=signal.limit,
+                            stop=sl_val, limit=tp_val,
                             from_entry=signal.from_entry, comment=signal.comment)
 
             # Equity — sum unrealized across all positions
