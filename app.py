@@ -14,9 +14,13 @@ from backtester import Backtester
 
 
 def sanitize_for_json(obj):
-    """Recursively replace NA, NaN, Inf with None for JSON serialization."""
+    """Recursively replace NA, NaN, Inf, numpy types with JSON-safe values."""
     if hasattr(obj, '_instance') and not bool(obj):  # PineNA / MQL5NA singleton
         return None
+    if isinstance(obj, bool):
+        return obj
+    if isinstance(obj, (int, str)):
+        return obj
     if isinstance(obj, float):
         if math.isnan(obj) or math.isinf(obj):
             return None
@@ -25,6 +29,15 @@ def sanitize_for_json(obj):
         return {k: sanitize_for_json(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [sanitize_for_json(v) for v in obj]
+    # Handle numpy types
+    import numpy as np
+    if isinstance(obj, (np.bool_, np.integer)):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        v = float(obj)
+        return None if math.isnan(v) or math.isinf(v) else v
+    if isinstance(obj, np.ndarray):
+        return [sanitize_for_json(x) for x in obj.tolist()]
     return obj
 
 
