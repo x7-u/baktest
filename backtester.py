@@ -110,7 +110,8 @@ class Backtester:
                  base_tf: str = 'M5',
                  utc_offset: int = 0,
                  date_filters: list = None,
-                 symbol_name: str = ''):
+                 symbol_name: str = '',
+                 funded_rules: dict = None):
         self.data = data
         self.smt_data = smt_data
         self.extra_data = extra_data or []
@@ -128,6 +129,7 @@ class Backtester:
         self.default_qty = default_qty
         self.spread_pips = spread_pips
         self.slippage_pips = slippage_pips
+        self.funded_rules = funded_rules
         self.trades: list[Trade] = []
         self.closed_trades: list[Trade] = []
         self.open_position = None
@@ -259,8 +261,17 @@ class Backtester:
 
         # Auto-detect currency conversion and pip size
         avg_price = self.data['close'].iloc[:min(100, len(self.data))].mean()
-        self._pnl_conversion = 1.0 / avg_price if avg_price > 10 else 1.0
-        self._pip_size = 0.01 if avg_price > 10 else 0.0001  # JPY vs standard forex
+        profit_ccy = self.symbol_name[3:6].upper() if len(self.symbol_name) >= 6 else ''
+        if profit_ccy == 'JPY' or avg_price > 10:
+            self._pnl_conversion = 1.0 / avg_price
+            self._pip_size = 0.01
+        elif profit_ccy == 'USD' or profit_ccy == '':
+            self._pnl_conversion = 1.0
+            self._pip_size = 0.0001
+        else:
+            # Cross pair: approximate conversion (P&L in foreign currency / price)
+            self._pnl_conversion = 1.0 / avg_price
+            self._pip_size = 0.0001
 
         # Platform-level SMT divergence engine
         self._smt_engine = SMTEngine() if self.smt_data is not None else None
@@ -627,6 +638,44 @@ class Backtester:
         # Underwater equity (consecutive bars in drawdown)
         underwater = _underwater_periods(self.drawdown_curve, dates if len(dates) == len(self.drawdown_curve) else None)
 
+        # Funded account simulation
+        funded = None
+        if self.funded_rules and self.funded_rules.get('enabled'):
+            target_pct = self.funded_rules.get('target', 10)
+            max_dd_pct = self.funded_rules.get('max_dd', 10)
+            daily_dd_pct = self.funded_rules.get('daily_dd', 5)
+            min_days = self.funded_rules.get('min_days', 5)
+
+            net_pct = metrics.get('net_profit_pct', 0)
+            max_dd = abs(metrics.get('max_drawdown', 0))
+            passed_target = net_pct >= target_pct
+            passed_dd = max_dd <= max_dd_pct
+
+            # Count unique trading days
+            trade_dates = set()
+            for t in filtered_trades:
+                if t.entry_date:
+                    trade_dates.add(str(t.entry_date)[:10])
+            trading_days = len(trade_dates)
+            passed_min_days = trading_days >= min_days
+
+            passed = passed_target and passed_dd and passed_min_days
+
+            funded = {
+                'enabled': True,
+                'passed': passed,
+                'target_pct': target_pct,
+                'net_pct': round(net_pct, 2),
+                'passed_target': passed_target,
+                'max_dd_pct': max_dd_pct,
+                'actual_dd': round(max_dd, 2),
+                'passed_dd': passed_dd,
+                'daily_dd_pct': daily_dd_pct,
+                'min_days': min_days,
+                'trading_days': trading_days,
+                'passed_min_days': passed_min_days,
+            }
+
         return {
             'metrics': metrics, 'trades': trade_list,
             'equity_curve': {'dates': dates, 'values': [round(v, 2) for v in equity]},
@@ -637,6 +686,7 @@ class Backtester:
             'monthly_returns': monthly,
             'r_multiples': r_multiples,
             'underwater': underwater,
+            'funded': funded,
         }
 
 

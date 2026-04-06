@@ -197,6 +197,16 @@ def _setup_backtest():
                 edf = edf.tail(max_bars).reset_index(drop=True)
             extra_dfs.append(edf)
 
+    funded_rules = None
+    if request.form.get('funded_enabled') == '1':
+        funded_rules = {
+            'enabled': True,
+            'target': float(request.form.get('funded_target', 10)),
+            'max_dd': float(request.form.get('funded_max_dd', 10)),
+            'daily_dd': float(request.form.get('funded_daily_dd', 5)),
+            'min_days': int(request.form.get('funded_min_days', 5)),
+        }
+
     bt = Backtester(
         data=df, source=script, engine=engine,
         initial_capital=initial_capital,
@@ -212,6 +222,7 @@ def _setup_backtest():
         base_tf=base_tf,
         utc_offset=utc_offset,
         date_filters=date_filters,
+        funded_rules=funded_rules,
     )
     return bt, engine, label
 
@@ -356,6 +367,17 @@ def mt5_fetch_and_backtest():
                 finally:
                     src2.shutdown()
 
+        # Funded account rules
+        funded_rules = None
+        if request.form.get('funded_enabled') == '1':
+            funded_rules = {
+                'enabled': True,
+                'target': float(request.form.get('funded_target', 10)),
+                'max_dd': float(request.form.get('funded_max_dd', 10)),
+                'daily_dd': float(request.form.get('funded_daily_dd', 5)),
+                'min_days': int(request.form.get('funded_min_days', 5)),
+            }
+
         # Run backtest (same path as CSV)
         bt = Backtester(
             data=df, source=script, engine=engine,
@@ -372,6 +394,7 @@ def mt5_fetch_and_backtest():
             utc_offset=utc_offset,
             date_filters=date_filters,
             symbol_name=symbol,
+            funded_rules=funded_rules,
         )
         results = bt.run()
 

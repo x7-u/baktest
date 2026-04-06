@@ -1757,11 +1757,19 @@ class MQL5Interpreter:
             if prop == 201: return self.variables.get('Ask', 0)  # SYMBOL_ASK
             if prop == 202: return self.variables.get('_Point', 0.00001)  # SYMBOL_POINT
             if prop == 205:  # SYMBOL_TRADE_TICK_VALUE
-                if self._is_jpy_pair:
-                    # For JPY pairs: tick value = contract * tick_size / price
-                    price = self.variables.get('close', 100)
-                    return self._contract_size * 0.001 / price if price > 0 else 1.0
-                return 10.0  # standard forex: $10 per pip per lot
+                profit_ccy = self.variables.get('__profit_ccy__', 'USD')
+                price = self.variables.get('close', 1.0)
+                if profit_ccy == 'USD':
+                    # USD-denominated: $10 per pip per standard lot
+                    return self._contract_size * 0.0001  # 100000 * 0.0001 = $10
+                elif profit_ccy == 'JPY':
+                    # JPY pairs: convert via price
+                    return self._contract_size * 0.01 / price if price > 0 else 1.0
+                else:
+                    # Cross pairs (CHF, CAD, GBP, etc.): tick value = contract * tick_size / price
+                    # For NZDCHF at 0.46: 100000 * 0.00001 / 0.46 ~ $2.17 per pip
+                    tick_size = 0.001 if self._is_jpy_pair else 0.00001
+                    return self._contract_size * tick_size / price if price > 0 else 1.0
             if prop == 206: return self._contract_size  # SYMBOL_TRADE_CONTRACT_SIZE
             if prop == 207: return 0.01  # SYMBOL_VOLUME_MIN
             if prop == 208: return 100.0  # SYMBOL_VOLUME_MAX

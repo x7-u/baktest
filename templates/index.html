@@ -622,6 +622,37 @@ if ta.crossunder(fast, slow)
           </div>
         </div>
       </div>
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:8px;">
+        <label onclick="document.getElementById('fundedWrap').style.display = document.getElementById('fundedWrap').style.display === 'none' ? 'block' : 'none'" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;font-size:12px;font-weight:600;color:var(--text);letter-spacing:0.3px;">
+          <span>&#127942; Funded Account Simulation</span>
+          <span style="font-size:10px;color:var(--text-dim);">&#9660;</span>
+        </label>
+        <div id="fundedWrap" style="display:none; margin-top:10px;">
+          <div class="settings-grid" style="grid-template-columns:1fr 1fr;">
+            <div class="field">
+              <label>Profit Target (%)</label>
+              <input type="number" id="fundedTarget" value="10" step="0.5" min="0" title="Profit target to pass the evaluation">
+            </div>
+            <div class="field">
+              <label>Max Drawdown (%)</label>
+              <input type="number" id="fundedMaxDD" value="10" step="0.5" min="0" title="Maximum drawdown before failing">
+            </div>
+            <div class="field">
+              <label>Daily Drawdown (%)</label>
+              <input type="number" id="fundedDailyDD" value="5" step="0.5" min="0" title="Maximum daily drawdown before failing">
+            </div>
+            <div class="field">
+              <label>Min Trading Days</label>
+              <input type="number" id="fundedMinDays" value="5" step="1" min="0" title="Minimum number of trading days required">
+            </div>
+          </div>
+          <div style="margin-top:6px;">
+            <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-dim);cursor:pointer;">
+              <input type="checkbox" id="fundedEnabled"> Enable funded account rules
+            </label>
+          </div>
+        </div>
+      </div>
       <div class="bar-limit-section">
         <label>Bars to Backtest</label>
         <div class="bar-chips">
@@ -1118,6 +1149,20 @@ function renderResults(data) {
       </div>
     </div>
 
+    ${data.funded && data.funded.enabled ? `
+    <div style="background:${data.funded.passed ? 'var(--green-dim)' : 'var(--red-dim)'};border:1px solid ${data.funded.passed ? 'var(--green)' : 'var(--red)'};border-radius:10px;padding:16px;margin-bottom:12px;">
+      <div style="font-size:16px;font-weight:700;color:${data.funded.passed ? 'var(--green)' : 'var(--red)'};">
+        ${data.funded.passed ? '&#10004; FUNDED ACCOUNT: PASSED' : '&#10008; FUNDED ACCOUNT: FAILED'}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px;font-size:12px;">
+        <div><span style="color:var(--text-dim);">Profit Target</span><br><span style="color:${data.funded.passed_target ? 'var(--green)' : 'var(--red)'}">${data.funded.net_pct}% / ${data.funded.target_pct}%</span></div>
+        <div><span style="color:var(--text-dim);">Max Drawdown</span><br><span style="color:${data.funded.passed_dd ? 'var(--green)' : 'var(--red)'}">${data.funded.actual_dd}% / ${data.funded.max_dd_pct}%</span></div>
+        <div><span style="color:var(--text-dim);">Daily DD</span><br><span style="color:var(--text-dim);">${data.funded.daily_dd_pct}% limit</span></div>
+        <div><span style="color:var(--text-dim);">Trading Days</span><br><span style="color:${data.funded.passed_min_days ? 'var(--green)' : 'var(--red)'}">${data.funded.trading_days} / ${data.funded.min_days}</span></div>
+      </div>
+    </div>
+    ` : ''}
+
     <!-- Tabs -->
     <div class="tabs">
       <button class="tab active" data-tab="charts" onclick="switchTab('charts')">Charts</button>
@@ -1380,6 +1425,11 @@ async function runBacktest() {
   formData.append('slippage_pips', document.getElementById('slippagePips').value);
   formData.append('utc_offset', document.getElementById('utcOffset').value);
   formData.append('max_bars', document.getElementById('maxBars').value);
+  formData.append('funded_enabled', document.getElementById('fundedEnabled').checked ? '1' : '0');
+  formData.append('funded_target', document.getElementById('fundedTarget').value);
+  formData.append('funded_max_dd', document.getElementById('fundedMaxDD').value);
+  formData.append('funded_daily_dd', document.getElementById('fundedDailyDD').value);
+  formData.append('funded_min_days', document.getElementById('fundedMinDays').value);
 
   // Data source specific fields
   let backtestUrl = '/api/backtest-stream';
@@ -1634,7 +1684,22 @@ function saveDateFilters() {
 const PROFILE_FIELDS = ['initialCapital', 'commission', 'defaultQty', 'riskPct', 'spreadPips', 'slippagePips', 'commissionPerLot', 'utcOffset'];
 
 function getProfileData() {
-  const data = { engine: currentEngine, baseTF: currentBaseTF, maxBars: document.getElementById('maxBars').value, dateFilters: getDateFilters() };
+  const data = {
+    engine: currentEngine,
+    baseTF: currentBaseTF,
+    dataMode: currentDataMode,
+    maxBars: document.getElementById('maxBars').value,
+    dateFilters: getDateFilters(),
+    mt5Symbol: document.getElementById('mt5Symbol').value,
+    mt5SMTSymbol: document.getElementById('mt5SMTSymbol').value,
+    mt5DateFrom: document.getElementById('mt5DateFrom').value,
+    mt5DateTo: document.getElementById('mt5DateTo').value,
+    fundedEnabled: document.getElementById('fundedEnabled').checked,
+    fundedTarget: document.getElementById('fundedTarget').value,
+    fundedMaxDD: document.getElementById('fundedMaxDD').value,
+    fundedDailyDD: document.getElementById('fundedDailyDD').value,
+    fundedMinDays: document.getElementById('fundedMinDays').value,
+  };
   PROFILE_FIELDS.forEach(id => { data[id] = document.getElementById(id).value; });
   return data;
 }
@@ -1642,7 +1707,17 @@ function getProfileData() {
 function applyProfileData(data) {
   if (data.engine) setEngine(data.engine);
   if (data.baseTF) setBaseTF(data.baseTF);
-  if (data.maxBars) { document.getElementById('maxBars').value = data.maxBars; }
+  if (data.dataMode) setDataMode(data.dataMode);
+  if (data.maxBars) document.getElementById('maxBars').value = data.maxBars;
+  if (data.mt5Symbol) document.getElementById('mt5Symbol').value = data.mt5Symbol;
+  if (data.mt5SMTSymbol) document.getElementById('mt5SMTSymbol').value = data.mt5SMTSymbol;
+  if (data.mt5DateFrom) document.getElementById('mt5DateFrom').value = data.mt5DateFrom;
+  if (data.mt5DateTo) document.getElementById('mt5DateTo').value = data.mt5DateTo;
+  if (data.fundedEnabled !== undefined) document.getElementById('fundedEnabled').checked = data.fundedEnabled;
+  if (data.fundedTarget) document.getElementById('fundedTarget').value = data.fundedTarget;
+  if (data.fundedMaxDD) document.getElementById('fundedMaxDD').value = data.fundedMaxDD;
+  if (data.fundedDailyDD) document.getElementById('fundedDailyDD').value = data.fundedDailyDD;
+  if (data.fundedMinDays) document.getElementById('fundedMinDays').value = data.fundedMinDays;
   PROFILE_FIELDS.forEach(id => {
     if (data[id] !== undefined) document.getElementById(id).value = data[id];
   });
@@ -1841,10 +1916,13 @@ function jumpToLine(lineNum) {
   if (savedScript) editor.value = savedScript;
 
   // Restore settings
-  ['initialCapital', 'commission', 'defaultQty', 'riskPct', 'spreadPips', 'slippagePips', 'commissionPerLot', 'utcOffset'].forEach(id => {
+  ['initialCapital', 'commission', 'defaultQty', 'riskPct', 'spreadPips', 'slippagePips', 'commissionPerLot', 'utcOffset', 'fundedTarget', 'fundedMaxDD', 'fundedDailyDD', 'fundedMinDays'].forEach(id => {
     const v = localStorage.getItem('_bt_' + id);
     if (v) document.getElementById(id).value = v;
   });
+  // Restore funded checkbox
+  const savedFunded = localStorage.getItem('_bt_fundedEnabled');
+  if (savedFunded === '1') document.getElementById('fundedEnabled').checked = true;
 
   // Save on change
   editor.addEventListener('input', () => {
@@ -1853,10 +1931,13 @@ function jumpToLine(lineNum) {
   });
 
   // Save settings on change
-  ['initialCapital', 'commission', 'defaultQty', 'riskPct', 'spreadPips', 'slippagePips', 'commissionPerLot', 'utcOffset'].forEach(id => {
+  ['initialCapital', 'commission', 'defaultQty', 'riskPct', 'spreadPips', 'slippagePips', 'commissionPerLot', 'utcOffset', 'fundedTarget', 'fundedMaxDD', 'fundedDailyDD', 'fundedMinDays'].forEach(id => {
     document.getElementById(id).addEventListener('change', function() {
       localStorage.setItem('_bt_' + id, this.value);
     });
+  });
+  document.getElementById('fundedEnabled').addEventListener('change', function() {
+    localStorage.setItem('_bt_fundedEnabled', this.checked ? '1' : '0');
   });
 })();
 
