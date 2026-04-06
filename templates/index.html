@@ -6,6 +6,7 @@
 <title>Trading Backtester</title>
 <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
 :root {
   --bg: #0a0e17;
@@ -645,6 +646,10 @@ if ta.crossunder(fast, slow)
               <label>Min Trading Days</label>
               <input type="number" id="fundedMinDays" value="5" step="1" min="0" title="Minimum number of trading days required">
             </div>
+            <div class="field">
+              <label>Phase 2 Target (%)</label>
+              <input type="number" id="fundedP2Target" value="5" step="0.5" min="0" title="Phase 2 profit target (0 to disable)">
+            </div>
           </div>
           <div style="margin-top:6px;">
             <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-dim);cursor:pointer;">
@@ -1173,6 +1178,65 @@ function exportCSV(type) {
 
 window.lastResults = null;
 
+// ── Script Diff Tracking ──
+window._lastRunScript = localStorage.getItem('_bt_lastRunScript') || '';
+window._lastRunMetrics = JSON.parse(localStorage.getItem('_bt_lastRunMetrics') || 'null');
+
+function computeDiff(oldText, newText) {
+  var oldLines = oldText.split('\n');
+  var newLines = newText.split('\n');
+  var result = [];
+  var maxLen = Math.max(oldLines.length, newLines.length);
+  for (var i = 0; i < maxLen; i++) {
+    var oldLine = i < oldLines.length ? oldLines[i] : undefined;
+    var newLine = i < newLines.length ? newLines[i] : undefined;
+    if (oldLine === newLine) {
+      result.push({type: 'same', line: i + 1, text: newLine});
+    } else if (oldLine === undefined) {
+      result.push({type: 'add', line: i + 1, text: newLine});
+    } else if (newLine === undefined) {
+      result.push({type: 'del', line: i + 1, text: oldLine});
+    } else {
+      result.push({type: 'del', line: i + 1, text: oldLine});
+      result.push({type: 'add', line: i + 1, text: newLine});
+    }
+  }
+  return result;
+}
+
+function renderDiff() {
+  var el = document.getElementById('diffContent');
+  if (!el) return;
+  var currentScript = document.getElementById('scriptEditor').value;
+  if (!window._lastRunScript) {
+    el.innerHTML = '<div style="color:var(--text-dim);font-size:12px;">This is the first run — no previous script to compare.</div>';
+    return;
+  }
+  if (currentScript === window._lastRunScript) {
+    el.innerHTML = '<div style="color:var(--green);font-size:12px;">&#10004; No changes — script is identical to last run.</div>';
+    return;
+  }
+  var diff = computeDiff(window._lastRunScript, currentScript);
+  var changes = diff.filter(function(d) { return d.type !== 'same'; });
+  var html = '<div style="margin-bottom:8px;font-size:12px;color:var(--text-dim);">' + changes.length + ' line(s) changed</div>';
+  html += '<div style="font-family:monospace;font-size:11px;line-height:1.6;max-height:400px;overflow-y:auto;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;">';
+  diff.forEach(function(d) {
+    if (d.type === 'same') {
+      // Only show context (2 lines around changes)
+      return;
+    }
+    var color = d.type === 'add' ? 'var(--green)' : 'var(--red)';
+    var prefix = d.type === 'add' ? '+' : '-';
+    var bg = d.type === 'add' ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)';
+    html += '<div style="color:' + color + ';background:' + bg + ';padding:1px 4px;white-space:pre-wrap;word-break:break-all;">';
+    html += '<span style="color:var(--text-dim);min-width:30px;display:inline-block;">' + d.line + '</span> ';
+    html += prefix + ' ' + (d.text || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    html += '</div>';
+  });
+  html += '</div>';
+  el.innerHTML = html;
+}
+
 function renderResults(data) {
   window.lastResults = data;
   const m = data.metrics;
@@ -1248,6 +1312,24 @@ function renderResults(data) {
     </div>
     ` : ''}
 
+    ${data.funded && data.funded.phase2 ? `
+    <div style="background:${data.funded.phase2.passed ? 'var(--green-dim)' : 'var(--red-dim)'};border:1px solid ${data.funded.phase2.passed ? 'var(--green)' : 'var(--red)'};border-radius:10px;padding:12px;margin-bottom:12px;margin-top:-8px;">
+      <div style="font-size:14px;font-weight:700;color:${data.funded.phase2.passed ? 'var(--green)' : 'var(--red)'};">
+        ${data.funded.phase2.passed ? '&#10004; PHASE 2: PASSED' : '&#10008; PHASE 2: FAILED'}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:6px;font-size:12px;">
+        <div><span style="color:var(--text-dim);">Target</span><br><span style="font-weight:600;color:${data.funded.phase2.passed_target ? 'var(--green)' : 'var(--red)'}">${data.funded.phase2.net_pct}% / ${data.funded.phase2.target_pct}%</span></div>
+        <div><span style="color:var(--text-dim);">Max DD</span><br><span style="font-weight:600;color:${data.funded.phase2.passed_dd ? 'var(--green)' : 'var(--red)'}">${data.funded.phase2.actual_dd}% / ${data.funded.phase2.max_dd_pct}%</span></div>
+        ${data.funded.phase2.target_hit_date ? '<div><span style="color:var(--text-dim);">Target Hit</span><br><span style="font-weight:600;">' + data.funded.phase2.target_hit_date + '</span></div>' : '<div><span style="color:var(--text-dim);">Target</span><br><span style="font-weight:600;">Not reached</span></div>'}
+        ${data.funded.phase2.target_hit_trade ? '<div><span style="color:var(--text-dim);">After Trade #</span><br><span style="font-weight:600;">' + data.funded.phase2.target_hit_trade + '</span></div>' : ''}
+      </div>
+    </div>
+    ` : ''}
+
+    <div style="display:flex;gap:6px;margin-bottom:12px;justify-content:flex-end;">
+      <button onclick="exportScreenshot()" style="background:var(--surface2);color:var(--text-dim);border:1px solid var(--border);border-radius:6px;padding:6px 14px;cursor:pointer;font-size:11px;font-weight:600;">&#128247; Export Screenshot</button>
+    </div>
+
     <!-- Tabs -->
     <div class="tabs">
       <button class="tab active" data-tab="charts" onclick="switchTab('charts')">Charts</button>
@@ -1255,6 +1337,7 @@ function renderResults(data) {
       <button class="tab" data-tab="monthly" onclick="switchTab('monthly')">Monthly Returns</button>
       <button class="tab" data-tab="trades" onclick="switchTab('trades')">Trade Log</button>
       <button class="tab" data-tab="heatmap" onclick="switchTab('heatmap')">Heatmap</button>
+      <button class="tab" data-tab="diff" onclick="switchTab('diff')">Script Diff</button>
     </div>
 
     <!-- Charts Tab -->
@@ -1451,6 +1534,43 @@ function renderResults(data) {
         </div>
       </div>
     </div>
+
+    <!-- Script Diff Tab -->
+    <div class="tab-content" id="tab-diff">
+      <div class="chart-section">
+        <div class="chart-header" style="display:flex;justify-content:space-between;align-items:center;">
+          Script Changes vs Last Run
+          <span style="font-size:11px;color:var(--text-dim);">Previous: ${window._lastRunScript ? 'saved' : 'none'}</span>
+        </div>
+        <div class="chart-body" style="padding:16px;" id="diffContent">
+          <div style="color:var(--text-dim);font-size:12px;">No previous run to compare.</div>
+        </div>
+      </div>
+      ${window._lastRunMetrics ? \`
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;">
+        <div class="chart-section">
+          <div class="chart-header">Previous Run</div>
+          <div class="chart-body" style="padding:12px;font-size:12px;">
+            <div class="metric-row"><span class="k">Net Profit</span><span class="v">\${formatNum(window._lastRunMetrics.net_profit, '$')}</span></div>
+            <div class="metric-row"><span class="k">Win Rate</span><span class="v">\${window._lastRunMetrics.win_rate}%</span></div>
+            <div class="metric-row"><span class="k">Trades</span><span class="v">\${window._lastRunMetrics.total_trades}</span></div>
+            <div class="metric-row"><span class="k">Profit Factor</span><span class="v">\${window._lastRunMetrics.profit_factor}</span></div>
+            <div class="metric-row"><span class="k">Sharpe</span><span class="v">\${window._lastRunMetrics.sharpe_ratio}</span></div>
+          </div>
+        </div>
+        <div class="chart-section">
+          <div class="chart-header">Current Run</div>
+          <div class="chart-body" style="padding:12px;font-size:12px;">
+            <div class="metric-row"><span class="k">Net Profit</span><span class="v \${pnlClass(m.net_profit)}">\${formatNum(m.net_profit, '$')}</span></div>
+            <div class="metric-row"><span class="k">Win Rate</span><span class="v">\${m.win_rate}%</span></div>
+            <div class="metric-row"><span class="k">Trades</span><span class="v">\${m.total_trades}</span></div>
+            <div class="metric-row"><span class="k">Profit Factor</span><span class="v">\${m.profit_factor}</span></div>
+            <div class="metric-row"><span class="k">Sharpe</span><span class="v">\${m.sharpe_ratio}</span></div>
+          </div>
+        </div>
+      </div>
+      \` : ''}
+    </div>
   `;
 
   // Render charts after DOM update
@@ -1462,6 +1582,16 @@ function renderResults(data) {
     if (data.r_multiples && data.r_multiples.length > 0) createRMultChart(data.r_multiples);
     createHeatmap(data.heatmap || []);
     createRecoveryChart(data.underwater || []);
+    renderDiff();
+    // Save current script + metrics for next diff
+    var currentScript = document.getElementById('scriptEditor').value;
+    window._lastRunScript = currentScript;
+    window._lastRunMetrics = {
+      net_profit: m.net_profit, win_rate: m.win_rate, total_trades: m.total_trades,
+      profit_factor: m.profit_factor, sharpe_ratio: m.sharpe_ratio,
+    };
+    localStorage.setItem('_bt_lastRunScript', currentScript);
+    localStorage.setItem('_bt_lastRunMetrics', JSON.stringify(window._lastRunMetrics));
   }, 50);
 }
 
@@ -1645,6 +1775,7 @@ async function runBacktest() {
   formData.append('funded_max_dd', document.getElementById('fundedMaxDD').value);
   formData.append('funded_daily_dd', document.getElementById('fundedDailyDD').value);
   formData.append('funded_min_days', document.getElementById('fundedMinDays').value);
+  formData.append('funded_p2_target', document.getElementById('fundedP2Target').value);
 
   // Data source specific fields
   let backtestUrl = '/api/backtest-stream';
@@ -1870,6 +2001,7 @@ function getProfileData() {
     fundedMaxDD: document.getElementById('fundedMaxDD').value,
     fundedDailyDD: document.getElementById('fundedDailyDD').value,
     fundedMinDays: document.getElementById('fundedMinDays').value,
+    fundedP2Target: document.getElementById('fundedP2Target').value,
   };
   PROFILE_FIELDS.forEach(id => { data[id] = document.getElementById(id).value; });
   return data;
@@ -1889,6 +2021,7 @@ function applyProfileData(data) {
   if (data.fundedMaxDD) document.getElementById('fundedMaxDD').value = data.fundedMaxDD;
   if (data.fundedDailyDD) document.getElementById('fundedDailyDD').value = data.fundedDailyDD;
   if (data.fundedMinDays) document.getElementById('fundedMinDays').value = data.fundedMinDays;
+  if (data.fundedP2Target) document.getElementById('fundedP2Target').value = data.fundedP2Target;
   PROFILE_FIELDS.forEach(id => {
     if (data[id] !== undefined) document.getElementById(id).value = data[id];
   });
@@ -2104,7 +2237,7 @@ function jumpToLine(lineNum) {
   if (savedScript) editor.value = savedScript;
 
   // Restore settings
-  ['initialCapital', 'commission', 'defaultQty', 'riskPct', 'spreadPips', 'slippagePips', 'commissionPerLot', 'utcOffset', 'fundedTarget', 'fundedMaxDD', 'fundedDailyDD', 'fundedMinDays'].forEach(id => {
+  ['initialCapital', 'commission', 'defaultQty', 'riskPct', 'spreadPips', 'slippagePips', 'commissionPerLot', 'utcOffset', 'fundedTarget', 'fundedMaxDD', 'fundedDailyDD', 'fundedMinDays', 'fundedP2Target'].forEach(id => {
     const v = localStorage.getItem('_bt_' + id);
     if (v) document.getElementById(id).value = v;
   });
@@ -2119,7 +2252,7 @@ function jumpToLine(lineNum) {
   });
 
   // Save settings on change
-  ['initialCapital', 'commission', 'defaultQty', 'riskPct', 'spreadPips', 'slippagePips', 'commissionPerLot', 'utcOffset', 'fundedTarget', 'fundedMaxDD', 'fundedDailyDD', 'fundedMinDays'].forEach(id => {
+  ['initialCapital', 'commission', 'defaultQty', 'riskPct', 'spreadPips', 'slippagePips', 'commissionPerLot', 'utcOffset', 'fundedTarget', 'fundedMaxDD', 'fundedDailyDD', 'fundedMinDays', 'fundedP2Target'].forEach(id => {
     document.getElementById(id).addEventListener('change', function() {
       localStorage.setItem('_bt_' + id, this.value);
     });
@@ -2227,6 +2360,46 @@ document.addEventListener('keydown', function(e) {
     runBacktest();
   }
 });
+
+// ── Export Screenshot ──
+function exportScreenshot() {
+  var resultsEl = document.getElementById('results');
+  if (!resultsEl) return;
+
+  // Temporarily expand all tab contents for full capture
+  var tabs = resultsEl.querySelectorAll('.tab-content');
+  var origDisplay = [];
+  tabs.forEach(function(t) {
+    origDisplay.push(t.style.display);
+    t.style.display = 'block';
+  });
+
+  html2canvas(resultsEl, {
+    backgroundColor: '#0a0e17',
+    scale: 2,
+    logging: false,
+    useCORS: true,
+  }).then(function(canvas) {
+    // Restore tab displays
+    tabs.forEach(function(t, i) {
+      t.style.display = origDisplay[i];
+    });
+
+    // Download
+    var link = document.createElement('a');
+    var sym = document.getElementById('mt5Symbol')?.value || 'backtest';
+    var now = new Date().toISOString().slice(0, 10);
+    link.download = 'report_' + sym + '_' + now + '.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  }).catch(function(err) {
+    // Restore on error
+    tabs.forEach(function(t, i) {
+      t.style.display = origDisplay[i];
+    });
+    alert('Screenshot failed: ' + err.message);
+  });
+}
 
 // ── Initialize on page ready ──
 function _initMT5() {

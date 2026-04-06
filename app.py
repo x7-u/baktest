@@ -218,6 +218,7 @@ def _setup_backtest():
             'max_dd': float(request.form.get('funded_max_dd', 10)),
             'daily_dd': float(request.form.get('funded_daily_dd', 5)),
             'min_days': int(request.form.get('funded_min_days', 5)),
+            'p2_target': float(request.form.get('funded_p2_target', 0)),
         }
 
     bt = Backtester(
@@ -412,6 +413,7 @@ def mt5_fetch_and_backtest():
                 'max_dd': float(request.form.get('funded_max_dd', 10)),
                 'daily_dd': float(request.form.get('funded_daily_dd', 5)),
                 'min_days': int(request.form.get('funded_min_days', 5)),
+                'p2_target': float(request.form.get('funded_p2_target', 0)),
             }
 
         # Run backtest (same path as CSV)

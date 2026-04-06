@@ -734,6 +734,50 @@ class Backtester:
                 except Exception:
                     pass
 
+            # Phase 2: if phase 1 passed and p2 target set
+            p2_target = self.funded_rules.get('p2_target', 0)
+            phase2 = None
+            if passed and p2_target > 0 and target_hit_trade is not None:
+                # Phase 2 starts from the trade after phase 1 target was hit
+                p2_trades = filtered_trades[target_hit_trade:]
+                p2_pnl = sum(t.pnl for t in p2_trades)
+                p2_net_pct = (p2_pnl / self.initial_capital) * 100
+                p2_target_amount = self.initial_capital * p2_target / 100
+
+                # Track P2 metrics
+                p2_running_pnl = 0
+                eq_at_p2_start = self.initial_capital + sum(ft.pnl for ft in filtered_trades[:target_hit_trade])
+                p2_peak_val = eq_at_p2_start
+                p2_max_dd = 0
+                p2_target_hit_date = None
+                p2_target_hit_trade = None
+
+                for j, t in enumerate(p2_trades):
+                    p2_running_pnl += t.pnl
+                    p2_current = eq_at_p2_start + p2_running_pnl
+                    p2_peak_val = max(p2_peak_val, p2_current)
+                    p2_dd = (p2_peak_val - p2_current) / p2_peak_val * 100 if p2_peak_val > 0 else 0
+                    p2_max_dd = max(p2_max_dd, p2_dd)
+
+                    if p2_target_hit_date is None and p2_running_pnl >= p2_target_amount:
+                        p2_target_hit_date = str(t.exit_date)[:10] if t.exit_date else None
+                        p2_target_hit_trade = target_hit_trade + j + 1
+
+                p2_passed_target = p2_net_pct >= p2_target
+                p2_passed_dd = p2_max_dd <= max_dd_pct
+
+                phase2 = {
+                    'passed': p2_passed_target and p2_passed_dd,
+                    'target_pct': p2_target,
+                    'net_pct': round(p2_net_pct, 2),
+                    'passed_target': p2_passed_target,
+                    'max_dd_pct': max_dd_pct,
+                    'actual_dd': round(p2_max_dd, 2),
+                    'passed_dd': p2_passed_dd,
+                    'target_hit_date': p2_target_hit_date,
+                    'target_hit_trade': p2_target_hit_trade,
+                }
+
             funded = {
                 'enabled': True,
                 'passed': passed,
@@ -754,6 +798,7 @@ class Backtester:
                 'dd_breach_date': dd_breach_date,
                 'dd_breach_trade': dd_breach_trade,
                 'first_trade_date': first_date,
+                'phase2': phase2,
             }
 
         return {
