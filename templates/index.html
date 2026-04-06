@@ -1071,29 +1071,35 @@ function exportCSV(type) {
   if (!window.lastResults) return;
   const d = window.lastResults;
   let csv = '', filename = 'export.csv';
+  const now = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const sym = document.getElementById('mt5Symbol')?.value || 'CSV';
+  const smt = document.getElementById('mt5SMTSymbol')?.value || '';
+
+  // Header with metadata
+  const meta = `# Exported: ${new Date().toLocaleString()}\n# Symbol: ${sym}\n# SMT Symbol: ${smt || 'None'}\n# Engine: ${currentEngine}\n`;
 
   if (type === 'trades') {
-    csv = '#,Direction,Entry Date,Entry Price,Exit Date,Exit Price,Qty,P&L,P&L %,R,Bars\n';
+    csv = meta + '#,Direction,Entry Date,Entry Price,Exit Date,Exit Price,Qty,P&L,P&L %,R,Exit Reason,Bars\n';
     d.trades.forEach((t, i) => {
-      csv += `${i+1},${t.direction},${t.entry_date||''},${t.entry_price},${t.exit_date||''},${t.exit_price||''},${t.qty},${t.pnl},${t.pnl_pct},${t.r_multiple||''},${t.bars_held}\n`;
+      csv += `${i+1},${t.direction},${t.entry_date||''},${t.entry_price},${t.exit_date||''},${t.exit_price||''},${t.qty},${t.pnl},${t.pnl_pct},${t.r_multiple||''},${t.exit_reason||''},${t.bars_held}\n`;
     });
-    filename = 'trades.csv';
+    filename = `trades_${sym}_${now}.csv`;
   } else if (type === 'metrics') {
     const m = d.metrics;
     csv = Object.keys(m).filter(k => typeof m[k] !== 'object').join(',') + '\n';
     csv += Object.keys(m).filter(k => typeof m[k] !== 'object').map(k => m[k]).join(',') + '\n';
-    filename = 'metrics.csv';
+    filename = `metrics_${sym}_${now}.csv`;
   } else if (type === 'monthly') {
-    csv = 'Month,P&L,Return %,Trades,Win Rate\n';
+    csv = meta + 'Month,P&L,Return %,Trades,Win Rate\n';
     (d.monthly_returns||[]).forEach(m => { csv += `${m.month},${m.pnl},${m.pnl_pct},${m.trades},${m.win_rate}\n`; });
-    filename = 'monthly_returns.csv';
+    filename = `monthly_${sym}_${now}.csv`;
   } else if (type === 'equity') {
     csv = 'Date,Equity,Drawdown %\n';
     const eq = d.equity_curve, dd = d.drawdown_curve;
     for (let i = 0; i < eq.dates.length; i++) {
       csv += `${eq.dates[i]},${eq.values[i]},${dd.values[i]}\n`;
     }
-    filename = 'equity_curve.csv';
+    filename = `equity_${sym}_${now}.csv`;
   }
 
   const blob = new Blob([csv], {type: 'text/csv'});
@@ -1300,6 +1306,7 @@ function renderResults(data) {
                 <th>P&L</th>
                 <th>P&L %</th>
                 <th>R</th>
+                <th>Exit</th>
                 <th>Bars</th>
               </tr>
             </thead>
@@ -1316,6 +1323,7 @@ function renderResults(data) {
                   <td class="${pnlClass(t.pnl)}">${formatNum(t.pnl, '$')}</td>
                   <td class="${pnlClass(t.pnl_pct)}">${t.pnl_pct > 0 ? '+' : ''}${t.pnl_pct}%</td>
                   <td class="${pnlClass(t.r_multiple || 0)}">${t.r_multiple || '-'}R</td>
+                  <td><span style="font-size:10px;color:${t.exit_reason==='tp'?'var(--green)':t.exit_reason==='sl'?'var(--red)':'var(--text-dim)'}">${t.exit_reason||'-'}</span></td>
                   <td>${t.bars_held}</td>
                 </tr>
               `).join('')}

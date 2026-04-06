@@ -30,7 +30,7 @@ def _get_create_interpreter(engine):
 
 class Trade:
     __slots__ = ('direction', 'entry_bar', 'entry_price', 'exit_bar',
-                 'exit_price', 'qty', 'pnl', 'pnl_pct', 'comment',
+                 'exit_price', 'qty', 'pnl', 'pnl_pct', 'comment', 'exit_reason',
                  'entry_date', 'exit_date', 'bars_held', 'mae', 'mfe',
                  'sl_price', 'tp_price', 'r_multiple')
 
@@ -43,6 +43,7 @@ class Trade:
         self.qty = qty; self.pnl = 0.0; self.pnl_pct = 0.0
         self.comment = comment; self.entry_date = entry_date; self.exit_date = None
         self.bars_held = 0; self.mae = 0.0; self.mfe = 0.0
+        self.exit_reason = ''  # 'tp', 'sl', 'signal', 'opposite', 'end'
         self.sl_price = sl_price; self.tp_price = tp_price
         self.r_multiple = 0.0
 
@@ -78,6 +79,7 @@ class Trade:
             'exit_date': str(self.exit_date) if self.exit_date else None,
             'bars_held': self.bars_held, 'mae': round(self.mae, 2), 'mfe': round(self.mfe, 2),
             'r_multiple': self.r_multiple,
+            'exit_reason': self.exit_reason,
         }
 
 
@@ -216,9 +218,10 @@ class Backtester:
         self.open_position = trade
         return tid
 
-    def _close_position(self, tid, bar_idx, exit_price, current_date, balance, is_na):
+    def _close_position(self, tid, bar_idx, exit_price, current_date, balance, is_na, reason='signal'):
         """Close a position by trade ID, return updated balance."""
         trade = self.open_positions.pop(tid)
+        trade.exit_reason = reason
         exit_price = self._apply_exit_price(exit_price, trade.direction)
         comm = self._calc_commission(trade.entry_price, exit_price, trade.qty)
         trade.close(bar_idx, exit_price, comm, current_date, self._pnl_conversion)
@@ -326,16 +329,18 @@ class Backtester:
                     bullish_bar = current_price >= bar_open
                     if pos.direction == 'long':
                         exit_price = sl_price if not bullish_bar else tp_price
+                        exit_reason = 'sl' if not bullish_bar else 'tp'
                     else:
                         exit_price = sl_price if bullish_bar else tp_price
+                        exit_reason = 'sl' if bullish_bar else 'tp'
                 elif sl_hit:
-                    exit_price = sl_price
+                    exit_price = sl_price; exit_reason = 'sl'
                 elif tp_hit:
-                    exit_price = tp_price
+                    exit_price = tp_price; exit_reason = 'tp'
                 else:
                     continue
 
-                balance = self._close_position(tid, i, exit_price, current_date, balance, is_na)
+                balance = self._close_position(tid, i, exit_price, current_date, balance, is_na, reason=exit_reason)
                 if tid in self.pending_exits:
                     del self.pending_exits[tid]
                 closed_tids.append(tid)
@@ -451,7 +456,7 @@ class Backtester:
                         # Market order — close opposite positions first
                         for tid, pos in list(self.open_positions.items()):
                             if pos.direction != signal.direction:
-                                balance = self._close_position(tid, i, current_price, current_date, balance, is_na)
+                                balance = self._close_position(tid, i, current_price, current_date, balance, is_na, reason='opposite')
                                 if tid in self.pending_exits:
                                     del self.pending_exits[tid]
                         if not self.open_positions:
@@ -475,7 +480,7 @@ class Backtester:
                 elif signal.action == 'close':
                     for tid, pos in list(self.open_positions.items()):
                         if signal.direction == 'all' or pos.direction == signal.direction:
-                            balance = self._close_position(tid, i, current_price, current_date, balance, is_na)
+                            balance = self._close_position(tid, i, current_price, current_date, balance, is_na, reason='signal')
                             if tid in self.pending_exits:
                                 del self.pending_exits[tid]
 
@@ -509,7 +514,7 @@ class Backtester:
             last_price = self.data.iloc[-1]['close']
             last_date = self.data.iloc[-1][date_col] if date_col else None
             for tid in list(self.open_positions.keys()):
-                balance = self._close_position(tid, total_bars - 1, last_price, last_date, balance, is_na)
+                balance = self._close_position(tid, total_bars - 1, last_price, last_date, balance, is_na, reason='end')
             self.equity_curve[-1] = balance
             self.balance_curve[-1] = balance
 
