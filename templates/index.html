@@ -847,6 +847,10 @@ function saveCurrentRun() {
     },
     color: ['#3b82f6','#22c55e','#ef4444','#eab308','#a855f7','#06b6d4','#f97316','#ec4899'][_savedRuns.length % 8],
   });
+  // Limit to 10 saved runs to prevent localStorage bloat
+  if (_savedRuns.length > 10) {
+    _savedRuns = _savedRuns.slice(-10);
+  }
   localStorage.setItem('_bt_savedRuns', JSON.stringify(_savedRuns));
   alert('Run saved: ' + label);
 }
@@ -1163,7 +1167,8 @@ function exportCSV(type) {
   } else if (type === 'equity') {
     csv = 'Date,Equity,Drawdown %\n';
     const eq = d.equity_curve, dd = d.drawdown_curve;
-    for (let i = 0; i < eq.dates.length; i++) {
+    var len = Math.min(eq.dates.length, eq.values.length, dd.values.length);
+    for (let i = 0; i < len; i++) {
       csv += `${eq.dates[i]},${eq.values[i]},${dd.values[i]}\n`;
     }
     filename = `equity_${sym}_${now}.csv`;
@@ -1289,7 +1294,7 @@ function renderResults(data) {
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px;font-size:12px;">
         <div><span style="color:var(--text-dim);">Profit Target</span><br><span style="color:${data.funded.passed_target ? 'var(--green)' : 'var(--red)'}; font-weight:600;">${data.funded.net_pct}% / ${data.funded.target_pct}%</span></div>
         <div><span style="color:var(--text-dim);">Max Drawdown</span><br><span style="color:${data.funded.passed_dd ? 'var(--green)' : 'var(--red)'}; font-weight:600;">${data.funded.actual_dd}% / ${data.funded.max_dd_pct}%</span></div>
-        <div><span style="color:var(--text-dim);">Daily DD Limit</span><br><span style="font-weight:600;">${data.funded.daily_dd_pct}%</span></div>
+        <div><span style="color:var(--text-dim);">Daily DD</span><br><span style="font-weight:600;color:${data.funded.daily_dd_breach ? 'var(--red)' : 'var(--green)'}">${data.funded.daily_dd_breach ? 'Breached' : 'OK'} / ${data.funded.daily_dd_pct}%</span></div>
         <div><span style="color:var(--text-dim);">Trading Days</span><br><span style="color:${data.funded.passed_min_days ? 'var(--green)' : 'var(--red)'}; font-weight:600;">${data.funded.trading_days} / ${data.funded.min_days}</span></div>
       </div>
       ${data.funded.target_hit_date ? `
@@ -1327,7 +1332,7 @@ function renderResults(data) {
     ` : ''}
 
     <div style="display:flex;gap:6px;margin-bottom:12px;justify-content:flex-end;">
-      <button onclick="exportScreenshot()" style="background:var(--surface2);color:var(--text-dim);border:1px solid var(--border);border-radius:6px;padding:6px 14px;cursor:pointer;font-size:11px;font-weight:600;">&#128247; Export Screenshot</button>
+      <button onclick="exportScreenshot()" title="Note: Price chart may appear blank in export. Use browser Print (Ctrl+P) for full capture." style="background:var(--surface2);color:var(--text-dim);border:1px solid var(--border);border-radius:6px;padding:6px 14px;cursor:pointer;font-size:11px;font-weight:600;">&#128247; Export Screenshot</button>
     </div>
 
     <!-- Tabs -->
@@ -1635,6 +1640,10 @@ function createRMultChart(rMults) {
 function createHeatmap(heatmapData) {
   var grid = document.getElementById('heatmapGrid');
   if (!grid) return;
+  if (!heatmapData || heatmapData.length === 0) {
+    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--text-dim);padding:20px;font-size:12px;">No trade data available for heatmap.</div>';
+    return;
+  }
   var days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 
   // Find max absolute PnL for color scaling
@@ -1852,6 +1861,8 @@ async function runBacktest() {
     }
   } catch (err) {
     clearInterval(progInterval);
+    progBar.style.width = '0%';
+    progText.textContent = '';
     if (err.name === 'AbortError') {
       progText.textContent = 'Cancelled';
       progBar.style.background = 'var(--red)';
@@ -2056,6 +2067,10 @@ function saveProfile() {
 
 function loadProfile(name) {
   if (!name) return; // Default selected
+  if (!confirm('Load profile "' + name + '"? Current settings will be overwritten.')) {
+    document.getElementById('profileSelect').value = '';
+    return;
+  }
   const profiles = JSON.parse(localStorage.getItem('_bt_profiles') || '{}');
   if (profiles[name]) applyProfileData(profiles[name]);
 }
@@ -2379,6 +2394,7 @@ function exportScreenshot() {
     scale: 2,
     logging: false,
     useCORS: true,
+    allowTaint: true,
   }).then(function(canvas) {
     // Restore tab displays
     tabs.forEach(function(t, i) {

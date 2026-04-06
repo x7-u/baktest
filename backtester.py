@@ -205,7 +205,7 @@ class Backtester:
         if self.commission_per_lot > 0:
             lots = qty / 100000 if qty >= 1000 else qty
             cost += self.commission_per_lot * lots * 2  # entry + exit
-        # Per-trade flat fee
+        # Per-trade flat fee: charged on both entry and exit (2x per round-trip)
         if self.commission_per_trade > 0:
             cost += self.commission_per_trade * 2
         return cost * self._pnl_conversion
@@ -238,6 +238,11 @@ class Backtester:
         """Core backtest loop. If streaming=True, yields progress dicts."""
         create_interpreter, is_na, NA = _get_create_interpreter(self.engine)
         self.interpreter = interpreter = create_interpreter(self.source)
+
+        # Set deterministic random seed for reproducible slippage
+        import random as _random
+        _random.seed(42)
+
         interpreter.setup(self.data)
         if self.smt_data is not None:
             interpreter.setup_secondary(self.smt_data)
@@ -444,8 +449,12 @@ class Backtester:
 
                     if order_type in ('limit', 'stop') and entry_price_level:
                         # Queue as pending order
-                        risk_qty = self._calc_risk_qty(entry_price_level, signal.stop, balance)
-                        qty = risk_qty if risk_qty else (signal.qty if signal.qty and not is_na(signal.qty) else self.default_qty)
+                        signal_qty = signal.qty if signal.qty and not is_na(signal.qty) else None
+                        if signal_qty and signal_qty > 0:
+                            qty = signal_qty  # EA calculated its own size
+                        else:
+                            risk_qty = self._calc_risk_qty(entry_price_level, signal.stop, balance)
+                            qty = risk_qty if risk_qty else self.default_qty
                         if qty <= 0: qty = self.default_qty
                         self.pending_entries.append(PendingEntry(
                             signal.direction, qty,
@@ -469,8 +478,12 @@ class Backtester:
                                     if other_sig.action == 'exit' and other_sig.stop and not is_na(other_sig.stop):
                                         sl_for_sizing = other_sig.stop
                                         break
-                            risk_qty = self._calc_risk_qty(entry_price, sl_for_sizing, balance)
-                            qty = risk_qty if risk_qty else (signal.qty if signal.qty and not is_na(signal.qty) else self.default_qty)
+                            signal_qty = signal.qty if signal.qty and not is_na(signal.qty) else None
+                            if signal_qty and signal_qty > 0:
+                                qty = signal_qty  # EA calculated its own size
+                            else:
+                                risk_qty = self._calc_risk_qty(entry_price, sl_for_sizing, balance)
+                                qty = risk_qty if risk_qty else self.default_qty
                             if qty <= 0: qty = self.default_qty
                             new_trade = Trade(signal.direction, i, entry_price, qty,
                                               signal.comment, current_date,
@@ -532,6 +545,11 @@ class Backtester:
                 balance = self._close_position(tid, total_bars - 1, last_price, last_date, balance, is_na, reason='end')
             self.equity_curve[-1] = balance
             self.balance_curve[-1] = balance
+
+        if not self.equity_curve:
+            self.equity_curve = [self.initial_capital]
+            self.balance_curve = [self.initial_capital]
+            self.drawdown_curve = [0]
 
         self.trades = self.closed_trades
         self._exposure_pct = round(bars_in_position / total_bars * 100, 1) if total_bars > 0 else 0
@@ -614,7 +632,16 @@ class Backtester:
         max_points = 2000
         if len(equity) > max_points:
             step = len(equity) // max_points
-            equity = equity[::step]; drawdown = drawdown[::step]; dates = dates[::step]
+            indices = list(range(0, len(equity), step))
+            # Ensure the max drawdown point is included
+            if drawdown:
+                min_dd_idx = drawdown.index(min(drawdown))
+                if min_dd_idx not in indices:
+                    indices.append(min_dd_idx)
+                    indices.sort()
+            equity = [equity[i] for i in indices if i < len(equity)]
+            drawdown = [drawdown[i] for i in indices if i < len(drawdown)]
+            dates = [dates[i] for i in indices if i < len(dates)]
 
         ohlc = []
         ohlc_data = self.data[['open', 'high', 'low', 'close']].values.tolist()
@@ -664,142 +691,186 @@ class Backtester:
         # Funded account simulation
         funded = None
         if self.funded_rules and self.funded_rules.get('enabled'):
-            target_pct = self.funded_rules.get('target', 10)
-            max_dd_pct = self.funded_rules.get('max_dd', 10)
-            daily_dd_pct = self.funded_rules.get('daily_dd', 5)
-            min_days = self.funded_rules.get('min_days', 5)
-
-            net_pct = metrics.get('net_profit_pct', 0)
-            max_dd = abs(metrics.get('max_drawdown', 0))
-            passed_target = net_pct >= target_pct
-            passed_dd = max_dd <= max_dd_pct
-
-            # Count unique trading days
-            trade_dates = set()
-            for t in filtered_trades:
-                if t.entry_date:
-                    trade_dates.add(str(t.entry_date)[:10])
-            trading_days = len(trade_dates)
-            passed_min_days = trading_days >= min_days
-
-            # Track WHEN the target was first hit
-            target_hit_date = None
-            target_hit_trade = None
-            target_hit_days = None
-            dd_breach_date = None
-            dd_breach_trade = None
-
-            running_pnl = 0
-            target_amount = self.initial_capital * target_pct / 100
-            dd_limit = self.initial_capital * max_dd_pct / 100
-            running_peak = self.initial_capital
-            days_seen = set()
-            breached = False
-
-            for i, t in enumerate(filtered_trades):
-                running_pnl += t.pnl
-                current_equity = self.initial_capital + running_pnl
-                running_peak = max(running_peak, current_equity)
-                current_dd = running_peak - current_equity
-
-                if t.entry_date:
-                    days_seen.add(str(t.entry_date)[:10])
-
-                # Check if target hit for the first time
-                if target_hit_date is None and running_pnl >= target_amount:
-                    target_hit_date = str(t.exit_date)[:10] if t.exit_date else str(t.entry_date)[:10] if t.entry_date else None
-                    target_hit_trade = i + 1
-                    target_hit_days = len(days_seen)
-
-                # Check if DD breached
-                if not breached and current_dd >= dd_limit:
-                    breached = True
-                    dd_breach_date = str(t.exit_date)[:10] if t.exit_date else str(t.entry_date)[:10] if t.entry_date else None
-                    dd_breach_trade = i + 1
-
-            passed = passed_target and passed_dd and passed_min_days
-            # If DD was breached before target hit, it's a fail regardless
-            if breached and (target_hit_trade is None or (dd_breach_trade and dd_breach_trade <= (target_hit_trade or 9999))):
-                passed = False
-
-            # Calculate duration from first trade to target hit
-            first_date = str(filtered_trades[0].entry_date)[:10] if filtered_trades and filtered_trades[0].entry_date else None
-            duration_days = None
-            if first_date and target_hit_date:
-                try:
-                    import pandas as _pd
-                    d1 = _pd.Timestamp(first_date)
-                    d2 = _pd.Timestamp(target_hit_date)
-                    duration_days = (d2 - d1).days
-                except Exception:
-                    pass
-
-            # Phase 2: if phase 1 passed and p2 target set
-            p2_target = self.funded_rules.get('p2_target', 0)
-            phase2 = None
-            if passed and p2_target > 0 and target_hit_trade is not None:
-                # Phase 2 starts from the trade after phase 1 target was hit
-                p2_trades = filtered_trades[target_hit_trade:]
-                p2_pnl = sum(t.pnl for t in p2_trades)
-                p2_net_pct = (p2_pnl / self.initial_capital) * 100
-                p2_target_amount = self.initial_capital * p2_target / 100
-
-                # Track P2 metrics
-                p2_running_pnl = 0
-                eq_at_p2_start = self.initial_capital + sum(ft.pnl for ft in filtered_trades[:target_hit_trade])
-                p2_peak_val = eq_at_p2_start
-                p2_max_dd = 0
-                p2_target_hit_date = None
-                p2_target_hit_trade = None
-
-                for j, t in enumerate(p2_trades):
-                    p2_running_pnl += t.pnl
-                    p2_current = eq_at_p2_start + p2_running_pnl
-                    p2_peak_val = max(p2_peak_val, p2_current)
-                    p2_dd = (p2_peak_val - p2_current) / p2_peak_val * 100 if p2_peak_val > 0 else 0
-                    p2_max_dd = max(p2_max_dd, p2_dd)
-
-                    if p2_target_hit_date is None and p2_running_pnl >= p2_target_amount:
-                        p2_target_hit_date = str(t.exit_date)[:10] if t.exit_date else None
-                        p2_target_hit_trade = target_hit_trade + j + 1
-
-                p2_passed_target = p2_net_pct >= p2_target
-                p2_passed_dd = p2_max_dd <= max_dd_pct
-
-                phase2 = {
-                    'passed': p2_passed_target and p2_passed_dd,
-                    'target_pct': p2_target,
-                    'net_pct': round(p2_net_pct, 2),
-                    'passed_target': p2_passed_target,
-                    'max_dd_pct': max_dd_pct,
-                    'actual_dd': round(p2_max_dd, 2),
-                    'passed_dd': p2_passed_dd,
-                    'target_hit_date': p2_target_hit_date,
-                    'target_hit_trade': p2_target_hit_trade,
+            if not filtered_trades:
+                funded = {
+                    'enabled': True, 'passed': False,
+                    'target_pct': self.funded_rules.get('target', 10),
+                    'net_pct': 0, 'passed_target': False,
+                    'max_dd_pct': self.funded_rules.get('max_dd', 10),
+                    'actual_dd': 0, 'passed_dd': True,
+                    'daily_dd_pct': self.funded_rules.get('daily_dd', 5),
+                    'min_days': self.funded_rules.get('min_days', 5),
+                    'trading_days': 0, 'passed_min_days': False,
+                    'target_hit_date': None, 'target_hit_trade': None,
+                    'target_hit_days': None, 'duration_days': None,
+                    'dd_breach_date': None, 'dd_breach_trade': None,
+                    'daily_dd_breach': False, 'daily_dd_breach_date': None,
+                    'first_trade_date': None, 'phase2': None,
                 }
+            else:
+                target_pct = self.funded_rules.get('target', 10)
+                max_dd_pct = self.funded_rules.get('max_dd', 10)
+                daily_dd_pct = self.funded_rules.get('daily_dd', 5)
+                min_days = self.funded_rules.get('min_days', 5)
 
-            funded = {
-                'enabled': True,
-                'passed': passed,
-                'target_pct': target_pct,
-                'net_pct': round(net_pct, 2),
-                'passed_target': passed_target,
-                'max_dd_pct': max_dd_pct,
-                'actual_dd': round(max_dd, 2),
-                'passed_dd': passed_dd,
-                'daily_dd_pct': daily_dd_pct,
-                'min_days': min_days,
-                'trading_days': trading_days,
-                'passed_min_days': passed_min_days,
-                'target_hit_date': target_hit_date,
-                'target_hit_trade': target_hit_trade,
-                'target_hit_days': target_hit_days,
-                'duration_days': duration_days,
-                'dd_breach_date': dd_breach_date,
-                'dd_breach_trade': dd_breach_trade,
-                'first_trade_date': first_date,
-                'phase2': phase2,
-            }
+                net_pct = metrics.get('net_profit_pct', 0)
+                max_dd = abs(metrics.get('max_drawdown', 0))
+                passed_target = net_pct >= target_pct
+                passed_dd = max_dd <= max_dd_pct
+
+                # Count unique trading days
+                trade_dates = set()
+                for t in filtered_trades:
+                    if t.entry_date:
+                        trade_dates.add(str(t.entry_date)[:10])
+                trading_days = len(trade_dates)
+                passed_min_days = trading_days >= min_days
+
+                # Track WHEN the target was first hit
+                target_hit_date = None
+                target_hit_trade = None
+                target_hit_days = None
+                dd_breach_date = None
+                dd_breach_trade = None
+
+                running_pnl = 0
+                target_amount = self.initial_capital * target_pct / 100
+                dd_limit = self.initial_capital * max_dd_pct / 100
+                running_peak = self.initial_capital
+                days_seen = set()
+                breached = False
+
+                for i, t in enumerate(filtered_trades):
+                    running_pnl += t.pnl
+                    current_equity = self.initial_capital + running_pnl
+                    running_peak = max(running_peak, current_equity)
+                    current_dd = running_peak - current_equity
+
+                    if t.entry_date:
+                        days_seen.add(str(t.entry_date)[:10])
+
+                    # Check if target hit for the first time
+                    if target_hit_date is None and running_pnl >= target_amount:
+                        target_hit_date = str(t.exit_date)[:10] if t.exit_date else str(t.entry_date)[:10] if t.entry_date else None
+                        target_hit_trade = i + 1
+                        target_hit_days = len(days_seen)
+
+                    # Check if DD breached
+                    if not breached and current_dd >= dd_limit:
+                        breached = True
+                        dd_breach_date = str(t.exit_date)[:10] if t.exit_date else str(t.entry_date)[:10] if t.entry_date else None
+                        dd_breach_trade = i + 1
+
+                # Daily drawdown check
+                daily_dd_breach = False
+                daily_dd_breach_date = None
+                if daily_dd_pct > 0 and filtered_trades:
+                    from collections import defaultdict
+                    daily_pnl = defaultdict(float)
+                    daily_start_equity = {}
+                    running_eq = self.initial_capital
+                    for t in filtered_trades:
+                        day = str(t.entry_date)[:10] if t.entry_date else 'unknown'
+                        if day not in daily_start_equity:
+                            daily_start_equity[day] = running_eq
+                        running_eq += t.pnl
+                        # Check if intraday DD exceeds limit
+                        day_start = daily_start_equity[day]
+                        if day_start > 0:
+                            intraday_dd = (day_start - running_eq) / day_start * 100
+                            if intraday_dd >= daily_dd_pct:
+                                daily_dd_breach = True
+                                if not daily_dd_breach_date:
+                                    daily_dd_breach_date = day
+
+                passed = passed_target and passed_dd and passed_min_days
+                # If DD was breached before target hit, it's a fail regardless
+                if breached and (target_hit_trade is None or (dd_breach_trade and dd_breach_trade <= (target_hit_trade or 9999))):
+                    passed = False
+                # If daily DD was breached, fail
+                if daily_dd_breach:
+                    passed = False
+
+                # Calculate duration from first trade to target hit
+                first_date = str(filtered_trades[0].entry_date)[:10] if filtered_trades[0].entry_date else None
+                duration_days = None
+                if first_date and target_hit_date:
+                    try:
+                        import pandas as _pd
+                        d1 = _pd.Timestamp(first_date)
+                        d2 = _pd.Timestamp(target_hit_date)
+                        duration_days = (d2 - d1).days
+                    except Exception:
+                        pass
+
+                # Phase 2: if phase 1 passed and p2 target set
+                p2_target = self.funded_rules.get('p2_target', 0)
+                phase2 = None
+                if passed and p2_target > 0 and target_hit_trade is not None:
+                    # Phase 2 starts from the trade after phase 1 target was hit
+                    p2_trades = filtered_trades[target_hit_trade:]
+                    p2_pnl = sum(t.pnl for t in p2_trades)
+                    p2_net_pct = (p2_pnl / self.initial_capital) * 100
+                    p2_target_amount = self.initial_capital * p2_target / 100
+
+                    # Track P2 metrics
+                    p2_running_pnl = 0
+                    eq_at_p2_start = self.initial_capital + sum(ft.pnl for ft in filtered_trades[:target_hit_trade])
+                    p2_peak_val = eq_at_p2_start
+                    p2_max_dd = 0
+                    p2_target_hit_date = None
+                    p2_target_hit_trade = None
+
+                    for j, t in enumerate(p2_trades):
+                        p2_running_pnl += t.pnl
+                        p2_current = eq_at_p2_start + p2_running_pnl
+                        p2_peak_val = max(p2_peak_val, p2_current)
+                        p2_dd = (p2_peak_val - p2_current) / p2_peak_val * 100 if p2_peak_val > 0 else 0
+                        p2_max_dd = max(p2_max_dd, p2_dd)
+
+                        if p2_target_hit_date is None and p2_running_pnl >= p2_target_amount:
+                            p2_target_hit_date = str(t.exit_date)[:10] if t.exit_date else None
+                            p2_target_hit_trade = target_hit_trade + j + 1
+
+                    p2_passed_target = p2_net_pct >= p2_target
+                    p2_passed_dd = p2_max_dd <= max_dd_pct
+
+                    phase2 = {
+                        'passed': p2_passed_target and p2_passed_dd,
+                        'target_pct': p2_target,
+                        'net_pct': round(p2_net_pct, 2),
+                        'passed_target': p2_passed_target,
+                        'max_dd_pct': max_dd_pct,
+                        'actual_dd': round(p2_max_dd, 2),
+                        'passed_dd': p2_passed_dd,
+                        'target_hit_date': p2_target_hit_date,
+                        'target_hit_trade': p2_target_hit_trade,
+                    }
+
+                funded = {
+                    'enabled': True,
+                    'passed': passed,
+                    'target_pct': target_pct,
+                    'net_pct': round(net_pct, 2),
+                    'passed_target': passed_target,
+                    'max_dd_pct': max_dd_pct,
+                    'actual_dd': round(max_dd, 2),
+                    'passed_dd': passed_dd,
+                    'daily_dd_pct': daily_dd_pct,
+                    'min_days': min_days,
+                    'trading_days': trading_days,
+                    'passed_min_days': passed_min_days,
+                    'target_hit_date': target_hit_date,
+                    'target_hit_trade': target_hit_trade,
+                    'target_hit_days': target_hit_days,
+                    'duration_days': duration_days,
+                    'dd_breach_date': dd_breach_date,
+                    'dd_breach_trade': dd_breach_trade,
+                    'daily_dd_breach': daily_dd_breach,
+                    'daily_dd_breach_date': daily_dd_breach_date,
+                    'first_trade_date': first_date,
+                    'phase2': phase2,
+                }
 
         return {
             'metrics': metrics, 'trades': trade_list,
