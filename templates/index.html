@@ -821,12 +821,55 @@ let priceChart = null;
 let equityChartJS = null;
 let drawdownChartJS = null;
 let distChartJS = null;
+let recoveryChartJS = null;
+
+var _savedRuns = JSON.parse(localStorage.getItem('_bt_savedRuns') || '[]');
+var _compareMode = false;
+
+function saveCurrentRun() {
+  if (!window.lastResults) return;
+  var label = prompt('Name this run:', 'Run ' + (_savedRuns.length + 1));
+  if (!label) return;
+  var eq = window.lastResults.equity_curve;
+  _savedRuns.push({
+    label: label,
+    dates: eq.dates.slice(0, 200),
+    values: eq.values.filter((v, i) => i % Math.max(1, Math.floor(eq.values.length / 200)) === 0),
+    metrics: {
+      net_profit: window.lastResults.metrics.net_profit,
+      win_rate: window.lastResults.metrics.win_rate,
+      total_trades: window.lastResults.metrics.total_trades,
+    },
+    color: ['#3b82f6','#22c55e','#ef4444','#eab308','#a855f7','#06b6d4','#f97316','#ec4899'][_savedRuns.length % 8],
+  });
+  localStorage.setItem('_bt_savedRuns', JSON.stringify(_savedRuns));
+  alert('Run saved: ' + label);
+}
+
+function toggleCompare() {
+  _compareMode = !_compareMode;
+  var btn = document.getElementById('btnCompare');
+  btn.style.background = _compareMode ? 'var(--blue-dim)' : 'var(--surface2)';
+  btn.style.color = _compareMode ? 'var(--blue)' : 'var(--text-dim)';
+  if (window.lastResults) {
+    createEquityChart(window.lastResults.equity_curve);
+  }
+}
+
+function clearSavedRuns() {
+  if (!confirm('Clear all saved runs?')) return;
+  _savedRuns = [];
+  localStorage.removeItem('_bt_savedRuns');
+  _compareMode = false;
+  if (window.lastResults) createEquityChart(window.lastResults.equity_curve);
+}
 
 function destroyCharts() {
   if (priceChart) { priceChart.remove(); priceChart = null; }
   if (equityChartJS) { equityChartJS.destroy(); equityChartJS = null; }
   if (drawdownChartJS) { drawdownChartJS.destroy(); drawdownChartJS = null; }
   if (distChartJS) { distChartJS.destroy(); distChartJS = null; }
+  if (recoveryChartJS) { recoveryChartJS.destroy(); recoveryChartJS = null; }
 }
 
 function createPriceChart(ohlc, markers, smtOhlc) {
@@ -958,27 +1001,46 @@ function createPriceChart(ohlc, markers, smtOhlc) {
 }
 
 function createEquityChart(data) {
+  if (equityChartJS) { equityChartJS.destroy(); equityChartJS = null; }
   const ctx = document.getElementById('equityCanvas').getContext('2d');
   const labels = data.dates.map((d, i) => typeof d === 'number' ? `Bar ${d}` : d);
+
+  var datasets = [{
+    label: 'Current',
+    data: data.values,
+    borderColor: '#3b82f6',
+    backgroundColor: 'rgba(59,130,246,0.1)',
+    borderWidth: 2,
+    fill: true,
+    pointRadius: 0,
+    tension: 0.1,
+  }];
+
+  if (_compareMode && _savedRuns.length > 0) {
+    _savedRuns.forEach(function(run) {
+      datasets.push({
+        label: run.label + ' ($' + (run.metrics.net_profit||0).toFixed(0) + ')',
+        data: run.values,
+        borderColor: run.color,
+        borderWidth: 1.5,
+        borderDash: [4, 2],
+        fill: false,
+        pointRadius: 0,
+        tension: 0.1,
+      });
+    });
+  }
+
   equityChartJS = new Chart(ctx, {
     type: 'line',
     data: {
       labels,
-      datasets: [{
-        label: 'Equity',
-        data: data.values,
-        borderColor: '#3b82f6',
-        backgroundColor: 'rgba(59,130,246,0.1)',
-        borderWidth: 2,
-        fill: true,
-        pointRadius: 0,
-        tension: 0.1,
-      }]
+      datasets: datasets
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
+      plugins: { legend: { display: _compareMode && _savedRuns.length > 0, labels: { color: '#64748b', font: { size: 10 } } } },
       scales: {
         x: { display: false },
         y: {
@@ -1192,6 +1254,7 @@ function renderResults(data) {
       <button class="tab" data-tab="metrics" onclick="switchTab('metrics')">Detailed Metrics</button>
       <button class="tab" data-tab="monthly" onclick="switchTab('monthly')">Monthly Returns</button>
       <button class="tab" data-tab="trades" onclick="switchTab('trades')">Trade Log</button>
+      <button class="tab" data-tab="heatmap" onclick="switchTab('heatmap')">Heatmap</button>
     </div>
 
     <!-- Charts Tab -->
@@ -1201,7 +1264,15 @@ function renderResults(data) {
         <div class="chart-body"><div id="priceChart"></div></div>
       </div>
       <div class="chart-section">
-        <div class="chart-header">Equity Curve <button onclick="exportCSV('equity')" style="float:right;background:var(--blue-dim);color:var(--blue);border:1px solid var(--border);border-radius:4px;padding:2px 10px;cursor:pointer;font-size:11px;">Export CSV</button></div>
+        <div class="chart-header" style="display:flex;justify-content:space-between;align-items:center;">
+          Equity Curve
+          <div style="display:flex;gap:4px;">
+            <button onclick="saveCurrentRun()" style="background:var(--blue-dim);color:var(--blue);border:1px solid var(--border);border-radius:4px;padding:2px 10px;cursor:pointer;font-size:11px;">Save Run</button>
+            <button onclick="toggleCompare()" id="btnCompare" style="background:var(--surface2);color:var(--text-dim);border:1px solid var(--border);border-radius:4px;padding:2px 10px;cursor:pointer;font-size:11px;">Compare</button>
+            <button onclick="clearSavedRuns()" style="background:var(--red-dim);color:var(--red);border:1px solid var(--border);border-radius:4px;padding:2px 10px;cursor:pointer;font-size:11px;">Clear</button>
+            <button onclick="exportCSV('equity')" style="background:var(--blue-dim);color:var(--blue);border:1px solid var(--border);border-radius:4px;padding:2px 10px;cursor:pointer;font-size:11px;">Export CSV</button>
+          </div>
+        </div>
         <div class="chart-body chart-canvas-wrap"><canvas id="equityCanvas"></canvas></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
@@ -1213,6 +1284,10 @@ function renderResults(data) {
           <div class="chart-header">P&L Distribution</div>
           <div class="chart-body chart-canvas-wrap"><canvas id="distCanvas"></canvas></div>
         </div>
+      </div>
+      <div class="chart-section" style="margin-top:12px;">
+        <div class="chart-header">Drawdown Recovery Periods</div>
+        <div class="chart-body chart-canvas-wrap"><canvas id="recoveryCanvas"></canvas></div>
       </div>
     </div>
 
@@ -1272,6 +1347,23 @@ function renderResults(data) {
           <div class="metric-row"><span class="k" data-tip="Average trade result as multiple of initial risk (SL distance)">Avg R-Multiple</span><span class="v ${pnlClass(m.avg_r_multiple)}">${m.avg_r_multiple || 0}R</span></div>
           <div class="metric-row"><span class="k" data-tip="Average max adverse excursion — worst unrealized loss per trade">Avg MAE</span><span class="v negative">${formatNum(m.avg_mae, '$')}</span></div>
           <div class="metric-row"><span class="k" data-tip="Average max favorable excursion — best unrealized profit per trade">Avg MFE</span><span class="v positive">${formatNum(m.avg_mfe, '$')}</span></div>
+        </div>
+      </div>
+      <div class="chart-section" style="margin-top:12px;">
+        <div class="chart-header">Consecutive Loss Probability</div>
+        <div class="chart-body" style="padding:16px;">
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px;font-size:12px;">
+            ${[3,5,7,10,15,20].map(n => {
+              var wr = m.win_rate / 100;
+              var lr = 1 - wr;
+              var prob = Math.pow(lr, n) * 100;
+              return '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px;text-align:center;">' +
+                '<div style="font-size:18px;font-weight:700;color:' + (prob > 10 ? 'var(--red)' : prob > 1 ? 'var(--yellow)' : 'var(--green)') + ';">' + prob.toFixed(prob < 1 ? 2 : 1) + '%</div>' +
+                '<div style="color:var(--text-dim);font-size:10px;">' + n + ' losses in a row</div>' +
+              '</div>';
+            }).join('')}
+          </div>
+          <div style="margin-top:8px;font-size:11px;color:var(--text-dim);">Based on ${m.win_rate}% win rate. Probability of experiencing N consecutive losing trades.</div>
         </div>
       </div>
     </div>
@@ -1349,6 +1441,16 @@ function renderResults(data) {
         </div>
       </div>
     </div>
+
+    <!-- Heatmap Tab -->
+    <div class="tab-content" id="tab-heatmap">
+      <div class="chart-section">
+        <div class="chart-header">Trade P&L by Hour & Day of Week</div>
+        <div class="chart-body" style="padding:16px;">
+          <div id="heatmapGrid" style="display:grid;grid-template-columns:60px repeat(24,1fr);gap:1px;font-size:10px;"></div>
+        </div>
+      </div>
+    </div>
   `;
 
   // Render charts after DOM update
@@ -1358,6 +1460,8 @@ function renderResults(data) {
     createDrawdownChart(data.drawdown_curve);
     createDistributionChart(m.pnl_distribution);
     if (data.r_multiples && data.r_multiples.length > 0) createRMultChart(data.r_multiples);
+    createHeatmap(data.heatmap || []);
+    createRecoveryChart(data.underwater || []);
   }, 50);
 }
 
@@ -1393,6 +1497,92 @@ function createRMultChart(rMults) {
       scales: {
         x: { grid: { display: false }, ticks: { color: '#64748b', font: { size: 10 } } },
         y: { grid: { color: '#1e2d45' }, ticks: { color: '#64748b' } },
+      }
+    }
+  });
+}
+
+function createHeatmap(heatmapData) {
+  var grid = document.getElementById('heatmapGrid');
+  if (!grid) return;
+  var days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+
+  // Find max absolute PnL for color scaling
+  var maxPnl = 1;
+  heatmapData.forEach(function(c) { maxPnl = Math.max(maxPnl, Math.abs(c.pnl)); });
+
+  // Build grid: header row + 7 day rows
+  var html = '<div style="font-weight:600;color:var(--text-dim);"></div>';
+  for (var h = 0; h < 24; h++) {
+    html += '<div style="text-align:center;font-weight:600;color:var(--text-dim);">' + h + '</div>';
+  }
+
+  for (var d = 0; d < 7; d++) {
+    html += '<div style="display:flex;align-items:center;font-weight:600;color:var(--text-dim);padding-right:4px;">' + days[d] + '</div>';
+    for (var h = 0; h < 24; h++) {
+      var cell = heatmapData.find(function(c) { return c.day === d && c.hour === h; });
+      var pnl = cell ? cell.pnl : 0;
+      var count = cell ? cell.count : 0;
+      var intensity = Math.min(1, Math.abs(pnl) / maxPnl);
+      var bg = pnl > 0
+        ? 'rgba(34,197,94,' + (0.1 + intensity * 0.7) + ')'
+        : pnl < 0
+          ? 'rgba(239,68,68,' + (0.1 + intensity * 0.7) + ')'
+          : 'var(--surface2)';
+      html += '<div style="background:' + bg + ';padding:4px 2px;text-align:center;border-radius:2px;cursor:default;" title="' + days[d] + ' ' + h + ':00 — $' + pnl.toFixed(2) + ' (' + count + ' trades)">';
+      html += count > 0 ? count : '';
+      html += '</div>';
+    }
+  }
+  grid.innerHTML = html;
+}
+
+function createRecoveryChart(underwater) {
+  if (!underwater || underwater.length === 0) return;
+  var el = document.getElementById('recoveryCanvas');
+  if (!el) return;
+  if (recoveryChartJS) { recoveryChartJS.destroy(); recoveryChartJS = null; }
+
+  // Sort by start index for chronological display
+  var sorted = underwater.slice().sort(function(a,b) { return a.start - b.start; });
+
+  recoveryChartJS = new Chart(el.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: sorted.map(function(p, i) { return p.start_date ? p.start_date.substring(0, 10) : 'DD #' + (i+1); }),
+      datasets: [{
+        label: 'Max Drawdown %',
+        data: sorted.map(function(p) { return p.max_dd; }),
+        backgroundColor: sorted.map(function(p) { return p.max_dd < -5 ? 'rgba(239,68,68,0.7)' : 'rgba(239,68,68,0.4)'; }),
+        borderWidth: 0,
+        borderRadius: 3,
+      }, {
+        label: 'Duration (bars)',
+        data: sorted.map(function(p) { return p.duration; }),
+        backgroundColor: 'rgba(59,130,246,0.3)',
+        borderWidth: 0,
+        borderRadius: 3,
+        yAxisID: 'y2',
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: true, labels: { color: '#64748b', font: { size: 10 } } },
+        tooltip: {
+          callbacks: {
+            afterLabel: function(ctx) {
+              var p = sorted[ctx.dataIndex];
+              return 'Duration: ' + p.duration + ' bars' + (p.end_date ? '\nRecovered: ' + p.end_date.substring(0,10) : '');
+            }
+          }
+        }
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: '#64748b', font: { size: 9 }, maxRotation: 45 } },
+        y: { grid: { color: '#1e2d45' }, ticks: { color: '#64748b', callback: function(v) { return v + '%'; } }, position: 'left' },
+        y2: { grid: { display: false }, ticks: { color: '#3b82f6' }, position: 'right' },
       }
     }
   });

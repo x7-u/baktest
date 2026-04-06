@@ -652,6 +652,9 @@ class Backtester:
         # Monthly returns
         monthly = _monthly_returns(filtered_trades, self.initial_capital)
 
+        # Trade heatmap: P&L by hour and day of week
+        heatmap = _trade_heatmap(filtered_trades)
+
         # R-multiple distribution
         r_multiples = [t.r_multiple for t in filtered_trades if t.r_multiple != 0]
 
@@ -763,6 +766,7 @@ class Backtester:
             'monthly_returns': monthly,
             'r_multiples': r_multiples,
             'underwater': underwater,
+            'heatmap': heatmap,
             'funded': funded,
         }
 
@@ -908,7 +912,7 @@ def _monthly_returns(trades, initial_capital):
 
 
 def _underwater_periods(drawdown_curve, dates=None):
-    """Find underwater (drawdown) periods with duration."""
+    """Find underwater (drawdown) periods with duration and dates."""
     periods = []
     in_dd = False
     start_idx = 0
@@ -928,18 +932,45 @@ def _underwater_periods(drawdown_curve, dates=None):
                     'end': i,
                     'duration': i - start_idx,
                     'max_dd': round(max_dd, 2),
+                    'start_date': dates[start_idx] if dates and start_idx < len(dates) else None,
+                    'end_date': dates[i] if dates and i < len(dates) else None,
                 })
                 in_dd = False
     if in_dd:
+        end_i = len(drawdown_curve) - 1
         periods.append({
             'start': start_idx,
-            'end': len(drawdown_curve) - 1,
+            'end': end_i,
             'duration': len(drawdown_curve) - start_idx,
             'max_dd': round(max_dd, 2),
+            'start_date': dates[start_idx] if dates and start_idx < len(dates) else None,
+            'end_date': dates[end_i] if dates and end_i < len(dates) else None,
         })
-    # Return top 10 longest
     periods.sort(key=lambda x: x['duration'], reverse=True)
-    return periods[:10]
+    return periods[:20]
+
+
+def _trade_heatmap(trades):
+    """Build P&L heatmap by hour (0-23) and day of week (0=Mon, 6=Sun)."""
+    import pandas as _pd
+    grid = {}  # {(day, hour): {'pnl': 0, 'count': 0, 'wins': 0}}
+    for t in trades:
+        if not t.entry_date:
+            continue
+        try:
+            dt = _pd.Timestamp(str(t.entry_date))
+            day = dt.dayofweek  # 0=Mon, 6=Sun
+            hour = dt.hour
+            key = f'{day}_{hour}'
+            if key not in grid:
+                grid[key] = {'day': day, 'hour': hour, 'pnl': 0, 'count': 0, 'wins': 0}
+            grid[key]['pnl'] = round(grid[key]['pnl'] + t.pnl, 2)
+            grid[key]['count'] += 1
+            if t.pnl > 0:
+                grid[key]['wins'] += 1
+        except Exception:
+            continue
+    return list(grid.values())
 
 
 def _empty_metrics(ic):
