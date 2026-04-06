@@ -153,6 +153,59 @@ class MT5DataSource:
 
         return sorted([s.name for s in symbols])
 
+    def get_data_range(self, symbol, tf_string):
+        """Get the earliest and latest available bar dates for a symbol/timeframe."""
+        import MetaTrader5 as mt5
+
+        if not self._initialized:
+            return None
+
+        tf_map = _get_tf_map()
+        tf_const = tf_map.get(tf_string)
+        if tf_const is None:
+            return None
+
+        # Fetch first bar (oldest available)
+        first_bars = mt5.copy_rates_from_pos(symbol, tf_const, 0, 1)
+        # Fetch last bar count to find the oldest
+        total = mt5.copy_rates_from_pos(symbol, tf_const, 0, 1)
+
+        # Get the very first available bar by requesting from epoch
+        from datetime import datetime
+        oldest = mt5.copy_rates_range(symbol, tf_const, datetime(2000, 1, 1), datetime(2000, 2, 1))
+        if oldest is None or len(oldest) == 0:
+            # Try getting total bar count and fetch the last one
+            bars = mt5.copy_rates_from_pos(symbol, tf_const, 99999, 1)
+            if bars is not None and len(bars) > 0:
+                earliest = pd.Timestamp(bars[0]['time'], unit='s')
+            else:
+                earliest = None
+        else:
+            earliest = pd.Timestamp(oldest[0]['time'], unit='s')
+
+        # Get most recent bar
+        latest_bars = mt5.copy_rates_from_pos(symbol, tf_const, 0, 1)
+        if latest_bars is not None and len(latest_bars) > 0:
+            latest = pd.Timestamp(latest_bars[0]['time'], unit='s')
+        else:
+            latest = None
+
+        # Better approach: count total bars available
+        # Fetch 1 bar from very far back position
+        for pos in [500000, 200000, 100000, 50000, 20000, 10000]:
+            far = mt5.copy_rates_from_pos(symbol, tf_const, pos, 1)
+            if far is not None and len(far) > 0:
+                earliest = pd.Timestamp(far[0]['time'], unit='s')
+                break
+
+        if earliest is None or latest is None:
+            return None
+
+        return {
+            'earliest': earliest.strftime('%Y-%m-%d'),
+            'latest': latest.strftime('%Y-%m-%d'),
+        }
+
     def get_symbol_info(self, symbol):
         """Get basic info about a symbol (digits, point, contract size)."""
         import MetaTrader5 as mt5

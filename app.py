@@ -300,6 +300,29 @@ def mt5_symbols():
         return jsonify({'symbols': [], 'error': str(e)})
 
 
+@app.route('/api/mt5/data-range')
+def mt5_data_range():
+    """Get earliest/latest available data for a symbol+timeframe."""
+    try:
+        from mt5_source import MT5DataSource
+        symbol = request.args.get('symbol', '').strip()
+        tf = request.args.get('tf', 'M5')
+        if not symbol:
+            return jsonify({'error': 'No symbol'})
+        src = MT5DataSource()
+        if not src.initialize():
+            return jsonify({'error': 'MT5 not running'})
+        try:
+            result = src.get_data_range(symbol, tf)
+            if result:
+                return jsonify(result)
+            return jsonify({'error': f'No data for {symbol}'})
+        finally:
+            src.shutdown()
+    except Exception as e:
+        return jsonify({'error': str(e)})
+
+
 @app.route('/api/mt5/fetch', methods=['POST'])
 def mt5_fetch_and_backtest():
     """Fetch data from MT5 and run backtest."""

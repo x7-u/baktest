@@ -1792,7 +1792,24 @@ function loadMT5Symbols() {
   }).catch(() => {});
 }
 
-// Date defaults set in window.onload at end of script
+// Fetch available data range when symbol is entered
+var _dataRangeTimer = null;
+document.getElementById('mt5Symbol').addEventListener('input', function() {
+  clearTimeout(_dataRangeTimer);
+  var sym = this.value.trim();
+  if (sym.length >= 3) {
+    _dataRangeTimer = setTimeout(function() {
+      fetch('/api/mt5/data-range?symbol=' + encodeURIComponent(sym) + '&tf=' + currentBaseTF)
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (d.earliest && d.latest) {
+            document.getElementById('mt5DateFrom').value = d.earliest;
+            document.getElementById('mt5DateTo').value = d.latest;
+          }
+        }).catch(function() {});
+    }, 500);
+  }
+});
 
 let currentBaseTF = 'M5';
 function setBaseTF(tf) {
