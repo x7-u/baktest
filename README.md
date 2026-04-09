@@ -4,7 +4,31 @@ A web-based backtesting engine that runs **Pine Script v5** and **MQL5 Expert Ad
 
 ## Changelog
 
-### v3.3 — Data Analysis + Funded Phases (Latest)
+### v3.4 — Dark Theme Redesign (Latest)
+
+**UI Redesign**
+- Pure black theme with dark grey accents
+- Courier New monospace font throughout
+- "Baktest" title in Lobster cursive font
+- All sharp corners — zero border-radius
+- Custom dark scrollbars matching theme
+- Sidebar on right side, no-scroll body at 100% zoom
+- Grey tab buttons, black action buttons with hover states
+- Custom logo icon
+
+**New Features**
+- Clickable heatmap cells showing trade list for that day/hour
+- Script diff tab with side-by-side metrics comparison table
+- Phase 2 funded account simulation
+- Screenshot/report export (PNG via html2canvas)
+- Exit reason column in trade log (tp/sl/signal/opposite/end)
+- Risk % properly overrides EA internal lot sizing
+- SL/TP sanity check auto-fixes inverted short trades
+- Daily drawdown enforcement in funded simulation
+- Deterministic slippage (reproducible results)
+- 15 bug fixes from critical code review
+
+### v3.3 — Data Analysis + Funded Phases
 
 **Data Analysis**
 - **Equity curve comparison** — save multiple runs and overlay them on the same chart with dashed colored lines
