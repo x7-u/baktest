@@ -3,60 +3,74 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Trading Backtester</title>
+<title>Baktest</title>
+<link href="https://fonts.googleapis.com/css2?family=Lobster&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
 :root {
-  --bg: #0a0e17;
-  --surface: #111827;
-  --surface2: #1a2235;
-  --border: #1e2d45;
-  --text: #e2e8f0;
-  --text-dim: #64748b;
+  --bg: #000000;
+  --surface: #050505;
+  --surface2: #0d0d0d;
+  --border: #1a1a1a;
+  --text: #e0e0e0;
+  --text-dim: #666666;
   --green: #22c55e;
-  --green-dim: rgba(34,197,94,0.15);
+  --green-dim: rgba(34,197,94,0.12);
   --red: #ef4444;
-  --red-dim: rgba(239,68,68,0.15);
+  --red-dim: rgba(239,68,68,0.12);
   --blue: #3b82f6;
-  --blue-dim: rgba(59,130,246,0.15);
+  --blue-dim: rgba(59,130,246,0.12);
   --yellow: #eab308;
   --purple: #a855f7;
   --cyan: #06b6d4;
 }
 * { margin:0; padding:0; box-sizing:border-box; }
 body {
-  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-family: 'Courier New', Courier, monospace;
   background: var(--bg);
   color: var(--text);
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
+/* Custom scrollbars */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #0a0a0a; }
+::-webkit-scrollbar-thumb { background: #333; }
+::-webkit-scrollbar-thumb:hover { background: #555; }
+::-webkit-scrollbar-corner { background: #0a0a0a; }
+* { scrollbar-width: thin; scrollbar-color: #333 #0a0a0a; }
+
 .header {
   padding: 20px 32px;
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 16px;
   background: var(--surface);
 }
 .header h1 {
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: -0.5px;
+  font-family: 'Lobster', cursive;
+  font-size: 38px;
+  font-weight: 400;
+  letter-spacing: 1px;
 }
 .header .tag {
-  font-size: 11px;
-  background: var(--blue-dim);
-  color: var(--blue);
+  font-size: 16px;
+  background: #000;
+  color: #888;
+  border: 1px solid #333;
+  padding: 5px 16px;
   padding: 3px 10px;
-  border-radius: 12px;
+  border-radius: 0;
   font-weight: 600;
 }
 .engine-badge {
   font-size: 11px;
   padding: 3px 10px;
-  border-radius: 12px;
+  border-radius: 0;
   font-weight: 600;
   display: inline-flex;
   align-items: center;
@@ -74,15 +88,15 @@ body {
 .engine-dot {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: 0;
   background: currentColor;
 }
-.main { display: flex; height: calc(100vh - 65px); }
+.main { display: flex; flex-direction: row-reverse; height: calc(100vh - 65px); }
 .sidebar {
   width: 420px;
   min-width: 420px;
   background: var(--surface);
-  border-right: 1px solid var(--border);
+  border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   overflow-y: auto;
@@ -101,7 +115,7 @@ body {
 }
 .file-drop {
   border: 2px dashed var(--border);
-  border-radius: 10px;
+  border-radius: 0;
   padding: 28px;
   text-align: center;
   cursor: pointer;
@@ -139,12 +153,12 @@ textarea.pine-editor {
   width: 100%;
   height: 100%;
   min-height: 250px;
-  background: #0d1117;
+  background: #050505;
   color: #c9d1d9;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 0;
   padding: 14px;
-  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-family: 'Courier New', Courier, monospace;
   font-size: 13px;
   line-height: 1.6;
   resize: vertical;
@@ -169,7 +183,7 @@ textarea.pine-editor:focus { border-color: var(--blue); }
   width: 100%;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 0;
   color: var(--text);
   padding: 8px 12px;
   font-size: 13px;
@@ -185,7 +199,7 @@ textarea.pine-editor:focus { border-color: var(--blue); }
   display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
 }
 .bar-chip {
-  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 0;
   color: var(--text-dim); padding: 6px 14px; font-size: 12px; font-weight: 600;
   cursor: pointer; transition: all 0.15s; outline: none; font-family: inherit;
 }
@@ -195,26 +209,29 @@ textarea.pine-editor:focus { border-color: var(--blue); }
 }
 .bar-custom {
   width: 80px; background: var(--bg); border: 1px solid var(--border);
-  border-radius: 6px; color: var(--text); padding: 6px 10px; font-size: 12px;
+  border-radius: 0; color: var(--text); padding: 6px 10px; font-size: 12px;
   outline: none; font-family: inherit;
 }
 .bar-custom:focus { border-color: var(--blue); }
 .btn-run {
   width: 100%;
   padding: 14px;
-  background: var(--blue);
-  color: white;
-  border: none;
-  border-radius: 8px;
-  font-size: 15px;
+  background: #000;
+  color: #ccc;
+  border: 1px solid #333;
+  border-radius: 0;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 13px;
   font-weight: 700;
   cursor: pointer;
-  transition: all 0.2s;
-  letter-spacing: 0.3px;
+  transition: all 0.15s;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
 }
-.btn-run:hover { background: #2563eb; transform: translateY(-1px); }
-.btn-run:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-.btn-run.running { background: var(--yellow); color: #000; }
+.btn-run:hover { background: #222; color: #fff; }
+.btn-run:active { background: #333; }
+.btn-run:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-run.running { background: #111; color: var(--yellow); border-color: var(--yellow); }
 .content {
   flex: 1;
   overflow-y: auto;
@@ -229,7 +246,7 @@ textarea.pine-editor:focus { border-color: var(--blue); }
   text-align: center;
   color: var(--text-dim);
 }
-.empty-state .icon { font-size: 64px; margin-bottom: 16px; opacity: 0.3; }
+.empty-state .icon { font-size: 64px; margin-bottom: 4px; opacity: 0.3; }
 .empty-state h2 { font-size: 20px; margin-bottom: 8px; color: var(--text); opacity: 0.5; }
 .empty-state p { font-size: 14px; }
 
@@ -243,7 +260,7 @@ textarea.pine-editor:focus { border-color: var(--blue); }
 .metric-card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 0;
   padding: 16px;
 }
 .metric-card .label {
@@ -271,7 +288,7 @@ textarea.pine-editor:focus { border-color: var(--blue); }
 .chart-section {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 0;
   margin-bottom: 20px;
   overflow: hidden;
 }
@@ -299,7 +316,7 @@ textarea.pine-editor:focus { border-color: var(--blue); }
 .metric-group {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 0;
   padding: 18px;
 }
 .metric-group h4 {
@@ -325,7 +342,7 @@ textarea.pine-editor:focus { border-color: var(--blue); }
 .trades-table-wrap {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 0;
   overflow: hidden;
   margin-bottom: 20px;
 }
@@ -362,7 +379,7 @@ textarea.pine-editor:focus { border-color: var(--blue); }
 .badge {
   display: inline-block;
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: 0;
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
@@ -374,7 +391,7 @@ textarea.pine-editor:focus { border-color: var(--blue); }
 .error-box {
   background: var(--red-dim);
   border: 1px solid var(--red);
-  border-radius: 10px;
+  border-radius: 0;
   padding: 16px 20px;
   margin-bottom: 20px;
   color: var(--red);
@@ -388,12 +405,12 @@ textarea.pine-editor:focus { border-color: var(--blue); }
   margin-bottom: 20px;
   background: var(--surface);
   padding: 4px;
-  border-radius: 10px;
+  border-radius: 0;
   border: 1px solid var(--border);
 }
 .tab {
   padding: 10px 20px;
-  border-radius: 8px;
+  border-radius: 0;
   cursor: pointer;
   font-size: 13px;
   font-weight: 600;
@@ -402,8 +419,8 @@ textarea.pine-editor:focus { border-color: var(--blue); }
   border: none;
   background: none;
 }
-.tab:hover { color: var(--text); background: var(--surface2); }
-.tab.active { color: var(--text); background: var(--blue-dim); color: var(--blue); }
+.tab:hover { color: var(--text); background: #222; }
+.tab.active { color: #fff; background: #333; }
 .tab-content { display: none; }
 .tab-content.active { display: block; }
 .metric-row .k[data-tip] {
@@ -417,11 +434,11 @@ textarea.pine-editor:focus { border-color: var(--blue); }
   left: 0;
   top: 100%;
   margin-top: 4px;
-  background: #0d1117;
+  background: #050505;
   border: 1px solid var(--border);
   color: var(--text);
   padding: 6px 10px;
-  border-radius: 6px;
+  border-radius: 0;
   font-size: 11px;
   white-space: nowrap;
   z-index: 1000;
@@ -437,7 +454,7 @@ textarea.pine-editor:focus { border-color: var(--blue); }
   width: 18px; height: 18px;
   border: 2px solid rgba(255,255,255,0.3);
   border-top-color: #fff;
-  border-radius: 50%;
+  border-radius: 0;
   animation: spin 0.6s linear infinite;
   margin-right: 8px;
   vertical-align: middle;
@@ -458,8 +475,8 @@ textarea.pine-editor:focus { border-color: var(--blue); }
 <body>
 
 <div class="header">
-  <h1>Trading Backtester</h1>
-  <span class="tag" id="engineTag">Pine Script Engine</span>
+  <h1>Baktest</h1>
+  <span class="tag" id="engineTag">Pine</span>
   <span id="engineBadge" class="engine-badge" style="display:none;">
     <span class="engine-dot"></span>
     <span id="engineLabel">Python</span>
@@ -470,7 +487,7 @@ textarea.pine-editor:focus { border-color: var(--blue); }
   <div class="sidebar">
     <div class="sidebar-section">
       <h3>Market Data</h3>
-      <div id="mt5StatusBox" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin-bottom:8px;display:flex;align-items:center;gap:6px;font-size:11px;">
+      <div id="mt5StatusBox" style="background:var(--surface2);border:1px solid var(--border);border-radius:0;padding:6px 10px;margin-bottom:8px;display:flex;align-items:center;gap:6px;font-size:11px;">
         <span id="mt5StatusDot" style="color:var(--text-dim);">&#9679;</span>
         <span id="mt5StatusText" style="color:var(--text-dim);">Checking MT5...</span>
       </div>
@@ -491,22 +508,22 @@ textarea.pine-editor:focus { border-color: var(--blue); }
         <div style="display:flex;flex-direction:column;gap:8px;">
           <div class="field">
             <label>Symbol</label>
-            <input type="text" id="mt5Symbol" placeholder="e.g. EURUSD, NZDJPY" list="mt5SymbolList" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px 12px;font-size:13px;">
+            <input type="text" id="mt5Symbol" placeholder="e.g. EURUSD, NZDJPY" list="mt5SymbolList" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:0;color:var(--text);padding:8px 12px;font-size:13px;">
             <datalist id="mt5SymbolList"></datalist>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
             <div class="field">
               <label>From Date</label>
-              <input type="text" id="mt5DateFrom" placeholder="YYYY-MM-DD" maxlength="10" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px 12px;font-size:13px;font-family:monospace;">
+              <input type="text" id="mt5DateFrom" placeholder="YYYY-MM-DD" maxlength="10" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:0;color:var(--text);padding:8px 12px;font-size:13px;font-family:monospace;">
             </div>
             <div class="field">
               <label>To Date</label>
-              <input type="text" id="mt5DateTo" placeholder="YYYY-MM-DD" maxlength="10" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px 12px;font-size:13px;font-family:monospace;">
+              <input type="text" id="mt5DateTo" placeholder="YYYY-MM-DD" maxlength="10" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:0;color:var(--text);padding:8px 12px;font-size:13px;font-family:monospace;">
             </div>
           </div>
           <div class="field">
             <label>SMT Symbol (optional)</label>
-            <input type="text" id="mt5SMTSymbol" placeholder="e.g. USDJPY" list="mt5SymbolList" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px 12px;font-size:13px;">
+            <input type="text" id="mt5SMTSymbol" placeholder="e.g. USDJPY" list="mt5SymbolList" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:0;color:var(--text);padding:8px 12px;font-size:13px;">
           </div>
         </div>
       </div>
@@ -534,7 +551,7 @@ textarea.pine-editor:focus { border-color: var(--blue); }
         <div class="filename" id="smtFileName"></div>
       </div>
       <div id="extraSymbols"></div>
-      <button id="addSymbolBtn" onclick="addSymbolUpload()" style="margin-top:8px;background:var(--surface2);color:var(--text-dim);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer;width:100%;">+ Add Correlation Symbol</button>
+      <button id="addSymbolBtn" onclick="addSymbolUpload()" style="margin-top:8px;background:var(--surface2);color:var(--text-dim);border:1px solid var(--border);border-radius:0;padding:6px 12px;font-size:11px;cursor:pointer;width:100%;">+ Add Correlation Symbol</button>
     </div>
 
     <div class="sidebar-section" style="flex:1; display:flex; flex-direction:column;">
@@ -546,7 +563,7 @@ textarea.pine-editor:focus { border-color: var(--blue); }
         </div>
       </div>
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
-        <label for="scriptFileInput" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 12px;font-size:11px;color:var(--text-dim);cursor:pointer;white-space:nowrap;">Upload Script</label>
+        <label for="scriptFileInput" style="background:var(--surface2);border:1px solid var(--border);border-radius:0;padding:5px 12px;font-size:11px;color:var(--text-dim);cursor:pointer;white-space:nowrap;">Upload Script</label>
         <input type="file" id="scriptFileInput" accept=".txt,.pine,.mq5,.mql5" style="display:none;">
         <span id="scriptFileName" style="font-size:11px;color:var(--green);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
       </div>
@@ -569,11 +586,11 @@ if ta.crossunder(fast, slow)
     <div class="sidebar-section">
       <h3>Settings</h3>
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:10px;">
-        <select id="profileSelect" onchange="loadProfile(this.value)" style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 8px;font-size:12px;">
+        <select id="profileSelect" onchange="loadProfile(this.value)" style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:0;color:var(--text);padding:6px 8px;font-size:12px;">
           <option value="">Default</option>
         </select>
-        <button onclick="saveProfile()" style="background:var(--blue-dim);color:var(--blue);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:11px;cursor:pointer;white-space:nowrap;">Save</button>
-        <button onclick="deleteProfile()" style="background:var(--red-dim);color:var(--red);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:11px;cursor:pointer;white-space:nowrap;">Del</button>
+        <button onclick="saveProfile()" style="background:var(--blue-dim);color:var(--blue);border:1px solid var(--border);border-radius:0;padding:6px 10px;font-size:11px;cursor:pointer;white-space:nowrap;">Save</button>
+        <button onclick="deleteProfile()" style="background:var(--red-dim);color:var(--red);border:1px solid var(--border);border-radius:0;padding:6px 10px;font-size:11px;cursor:pointer;white-space:nowrap;">Del</button>
       </div>
       <div class="settings-grid">
         <div class="field">
@@ -609,7 +626,7 @@ if ta.crossunder(fast, slow)
           <input type="number" id="utcOffset" value="0" step="1" min="-12" max="14" title="Broker server UTC offset (e.g. 2 for EET, 3 for EEST)">
         </div>
       </div>
-      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:12px;">
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:0;padding:12px;margin-top:12px;">
         <label onclick="document.getElementById('dateFilterWrap').style.display = document.getElementById('dateFilterWrap').style.display === 'none' ? 'block' : 'none'" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;font-size:12px;font-weight:600;color:var(--text);letter-spacing:0.3px;">
           <span>&#128197; Date Exclusion Filter</span>
           <span id="dateFilterArrow" style="font-size:10px;color:var(--text-dim);">&#9660;</span>
@@ -618,12 +635,12 @@ if ta.crossunder(fast, slow)
           <p style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">Exclude date ranges or specific dates from the backtest.</p>
           <div id="dateFilters"></div>
           <div style="display:flex;gap:6px;margin-top:6px;">
-            <button onclick="addDateFilter('range')" style="flex:1;background:var(--bg);color:var(--text-dim);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:11px;cursor:pointer;font-weight:600;">+ Date Range</button>
-            <button onclick="addDateFilter('single')" style="flex:1;background:var(--bg);color:var(--text-dim);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:11px;cursor:pointer;font-weight:600;">+ Single Date</button>
+            <button onclick="addDateFilter('range')" style="flex:1;background:var(--bg);color:var(--text-dim);border:1px solid var(--border);border-radius:0;padding:6px 8px;font-size:11px;cursor:pointer;font-weight:600;">+ Date Range</button>
+            <button onclick="addDateFilter('single')" style="flex:1;background:var(--bg);color:var(--text-dim);border:1px solid var(--border);border-radius:0;padding:6px 8px;font-size:11px;cursor:pointer;font-weight:600;">+ Single Date</button>
           </div>
         </div>
       </div>
-      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:8px;">
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:0;padding:12px;margin-top:8px;">
         <label onclick="document.getElementById('fundedWrap').style.display = document.getElementById('fundedWrap').style.display === 'none' ? 'block' : 'none'" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;font-size:12px;font-weight:600;color:var(--text);letter-spacing:0.3px;">
           <span>&#127942; Funded Account Simulation</span>
           <span style="font-size:10px;color:var(--text-dim);">&#9660;</span>
@@ -680,7 +697,7 @@ if ta.crossunder(fast, slow)
             <div class="field"><label>Test Window (bars)</label><input type="number" id="optTest" value="1000" step="250"></div>
             <div class="field"><label>Step (bars)</label><input type="number" id="optStep" value="1000" step="250"></div>
             <div class="field"><label>Optimize Metric</label>
-              <select id="optMetric" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-size:13px;">
+              <select id="optMetric" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:0;color:var(--text);padding:8px;font-size:13px;">
                 <option value="sharpe_ratio">Sharpe Ratio</option>
                 <option value="profit_factor">Profit Factor</option>
                 <option value="net_profit">Net Profit</option>
@@ -690,7 +707,7 @@ if ta.crossunder(fast, slow)
           </div>
           <div style="margin-top:8px;">
             <label style="display:block;font-size:11px;color:var(--text-dim);margin-bottom:4px;">Parameter Ranges (JSON)</label>
-            <textarea id="optParams" style="width:100%;height:60px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-family:monospace;font-size:12px;resize:vertical;" placeholder='[{"name":"length","start":5,"end":50,"step":5}]'></textarea>
+            <textarea id="optParams" style="width:100%;height:60px;background:var(--bg);border:1px solid var(--border);border-radius:0;color:var(--text);padding:8px;font-family:monospace;font-size:12px;resize:vertical;" placeholder='[{"name":"length","start":5,"end":50,"step":5}]'></textarea>
           </div>
         </div>
       </div>
@@ -698,18 +715,18 @@ if ta.crossunder(fast, slow)
 
     <div class="sidebar-section">
       <div id="progressWrap" style="display:none; margin-bottom:10px;">
-        <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; height:24px; overflow:hidden; position:relative;">
-          <div id="progressBar" style="background:linear-gradient(90deg, var(--blue), var(--cyan)); height:100%; width:0%; transition:width 0.3s; border-radius:5px;"></div>
+        <div style="background:var(--bg); border:1px solid var(--border); border-radius:0; height:24px; overflow:hidden; position:relative;">
+          <div id="progressBar" style="background:linear-gradient(90deg, var(--blue), var(--cyan)); height:100%; width:0%; transition:width 0.3s; border-radius:0;"></div>
           <span id="progressText" style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); font-size:11px; font-weight:600; color:var(--text);">0%</span>
         </div>
       </div>
       <button class="btn-run" id="btnRun" onclick="runBacktest()">
         Run Backtest
       </button>
-      <button class="btn-run" id="btnCancel" onclick="cancelBacktest()" style="display:none;background:var(--red);margin-top:6px;">
+      <button class="btn-run" id="btnCancel" onclick="cancelBacktest()" style="display:none;border-color:var(--red);color:var(--red);margin-top:6px;">
         Cancel
       </button>
-      <button class="btn-run" id="btnOptimize" onclick="runOptimization()" style="background:var(--purple);margin-top:8px;">
+      <button class="btn-run" id="btnOptimize" onclick="runOptimization()" style="margin-top:6px;">
         Walk-Forward Optimize
       </button>
     </div>
@@ -717,7 +734,7 @@ if ta.crossunder(fast, slow)
 
   <div class="content empty" id="content">
     <div class="empty-state" id="emptyState">
-      <div class="icon">&#9888;&#65039;</div>
+      <div class="icon"><img src="/static/logo.png" alt="Baktest" style="width:120px;height:120px;margin-bottom:-10px;"></div>
       <h2>No Backtest Results</h2>
       <p>Upload a MetaTrader CSV and paste a strategy to get started.</p>
     </div>
@@ -1224,7 +1241,7 @@ function renderDiff() {
   var diff = computeDiff(window._lastRunScript, currentScript);
   var changes = diff.filter(function(d) { return d.type !== 'same'; });
   var html = '<div style="margin-bottom:8px;font-size:12px;color:var(--text-dim);">' + changes.length + ' line(s) changed</div>';
-  html += '<div style="font-family:monospace;font-size:11px;line-height:1.6;max-height:400px;overflow-y:auto;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;">';
+  html += '<div style="font-family:monospace;font-size:11px;line-height:1.6;max-height:400px;overflow-y:auto;background:var(--bg);border:1px solid var(--border);border-radius:0;padding:8px;">';
   diff.forEach(function(d) {
     if (d.type === 'same') {
       // Only show context (2 lines around changes)
@@ -1310,7 +1327,7 @@ function renderResults(data) {
     </div>
 
     ${data.funded && data.funded.enabled ? `
-    <div style="background:${data.funded.passed ? 'var(--green-dim)' : 'var(--red-dim)'};border:1px solid ${data.funded.passed ? 'var(--green)' : 'var(--red)'};border-radius:10px;padding:16px;margin-bottom:12px;">
+    <div style="background:${data.funded.passed ? 'var(--green-dim)' : 'var(--red-dim)'};border:1px solid ${data.funded.passed ? 'var(--green)' : 'var(--red)'};border-radius:0;padding:16px;margin-bottom:12px;">
       <div style="font-size:16px;font-weight:700;color:${data.funded.passed ? 'var(--green)' : 'var(--red)'};">
         ${data.funded.passed ? '&#10004; FUNDED ACCOUNT: PASSED' : '&#10008; FUNDED ACCOUNT: FAILED'}
       </div>
@@ -1341,7 +1358,7 @@ function renderResults(data) {
     ` : ''}
 
     ${data.funded && data.funded.phase2 ? `
-    <div style="background:${data.funded.phase2.passed ? 'var(--green-dim)' : 'var(--red-dim)'};border:1px solid ${data.funded.phase2.passed ? 'var(--green)' : 'var(--red)'};border-radius:10px;padding:12px;margin-bottom:12px;margin-top:-8px;">
+    <div style="background:${data.funded.phase2.passed ? 'var(--green-dim)' : 'var(--red-dim)'};border:1px solid ${data.funded.phase2.passed ? 'var(--green)' : 'var(--red)'};border-radius:0;padding:12px;margin-bottom:12px;margin-top:-8px;">
       <div style="font-size:14px;font-weight:700;color:${data.funded.phase2.passed ? 'var(--green)' : 'var(--red)'};">
         ${data.funded.phase2.passed ? '&#10004; PHASE 2: PASSED' : '&#10008; PHASE 2: FAILED'}
       </div>
@@ -1355,7 +1372,7 @@ function renderResults(data) {
     ` : ''}
 
     <div style="display:flex;gap:6px;margin-bottom:12px;justify-content:flex-end;">
-      <button onclick="exportScreenshot()" title="Note: Price chart may appear blank in export. Use browser Print (Ctrl+P) for full capture." style="background:var(--surface2);color:var(--text-dim);border:1px solid var(--border);border-radius:6px;padding:6px 14px;cursor:pointer;font-size:11px;font-weight:600;">&#128247; Export Screenshot</button>
+      <button onclick="exportScreenshot()" title="Note: Price chart may appear blank in export. Use browser Print (Ctrl+P) for full capture." style="background:var(--surface2);color:var(--text-dim);border:1px solid var(--border);border-radius:0;padding:6px 14px;cursor:pointer;font-size:11px;font-weight:600;">&#128247; Export Screenshot</button>
     </div>
 
     <!-- Tabs -->
@@ -1378,10 +1395,10 @@ function renderResults(data) {
         <div class="chart-header" style="display:flex;justify-content:space-between;align-items:center;">
           Equity Curve
           <div style="display:flex;gap:4px;">
-            <button onclick="saveCurrentRun()" style="background:var(--blue-dim);color:var(--blue);border:1px solid var(--border);border-radius:4px;padding:2px 10px;cursor:pointer;font-size:11px;">Save Run</button>
-            <button onclick="toggleCompare()" id="btnCompare" style="background:var(--surface2);color:var(--text-dim);border:1px solid var(--border);border-radius:4px;padding:2px 10px;cursor:pointer;font-size:11px;">Compare</button>
-            <button onclick="clearSavedRuns()" style="background:var(--red-dim);color:var(--red);border:1px solid var(--border);border-radius:4px;padding:2px 10px;cursor:pointer;font-size:11px;">Clear</button>
-            <button onclick="exportCSV('equity')" style="background:var(--blue-dim);color:var(--blue);border:1px solid var(--border);border-radius:4px;padding:2px 10px;cursor:pointer;font-size:11px;">Export CSV</button>
+            <button onclick="saveCurrentRun()" style="background:var(--blue-dim);color:var(--blue);border:1px solid var(--border);border-radius:0;padding:2px 10px;cursor:pointer;font-size:11px;">Save Run</button>
+            <button onclick="toggleCompare()" id="btnCompare" style="background:var(--surface2);color:var(--text-dim);border:1px solid var(--border);border-radius:0;padding:2px 10px;cursor:pointer;font-size:11px;">Compare</button>
+            <button onclick="clearSavedRuns()" style="background:var(--red-dim);color:var(--red);border:1px solid var(--border);border-radius:0;padding:2px 10px;cursor:pointer;font-size:11px;">Clear</button>
+            <button onclick="exportCSV('equity')" style="background:var(--blue-dim);color:var(--blue);border:1px solid var(--border);border-radius:0;padding:2px 10px;cursor:pointer;font-size:11px;">Export CSV</button>
           </div>
         </div>
         <div class="chart-body chart-canvas-wrap"><canvas id="equityCanvas"></canvas></div>
@@ -1404,7 +1421,7 @@ function renderResults(data) {
 
     <!-- Metrics Tab -->
     <div class="tab-content" id="tab-metrics">
-      <div style="margin-bottom:12px;text-align:right;"><button onclick="exportCSV('metrics')" style="background:var(--blue-dim);color:var(--blue);border:1px solid var(--border);border-radius:4px;padding:4px 14px;cursor:pointer;font-size:11px;">Export Metrics CSV</button></div>
+      <div style="margin-bottom:12px;text-align:right;"><button onclick="exportCSV('metrics')" style="background:var(--blue-dim);color:var(--blue);border:1px solid var(--border);border-radius:0;padding:4px 14px;cursor:pointer;font-size:11px;">Export Metrics CSV</button></div>
       <div class="metrics-grid">
         <div class="metric-group">
           <h4>Profitability</h4>
@@ -1468,7 +1485,7 @@ function renderResults(data) {
               var wr = m.win_rate / 100;
               var lr = 1 - wr;
               var prob = Math.pow(lr, n) * 100;
-              return '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px;text-align:center;">' +
+              return '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:0;padding:8px;text-align:center;">' +
                 '<div style="font-size:18px;font-weight:700;color:' + (prob > 10 ? 'var(--red)' : prob > 1 ? 'var(--yellow)' : 'var(--green)') + ';">' + prob.toFixed(prob < 1 ? 2 : 1) + '%</div>' +
                 '<div style="color:var(--text-dim);font-size:10px;">' + n + ' losses in a row</div>' +
               '</div>';
@@ -1482,7 +1499,7 @@ function renderResults(data) {
     <!-- Monthly Returns Tab -->
     <div class="tab-content" id="tab-monthly">
       <div class="trades-table-wrap">
-        <div class="chart-header">Monthly Returns <button onclick="exportCSV('monthly')" style="float:right;background:var(--blue-dim);color:var(--blue);border:1px solid var(--border);border-radius:4px;padding:2px 10px;cursor:pointer;font-size:11px;">Export CSV</button></div>
+        <div class="chart-header">Monthly Returns <button onclick="exportCSV('monthly')" style="float:right;background:var(--blue-dim);color:var(--blue);border:1px solid var(--border);border-radius:0;padding:2px 10px;cursor:pointer;font-size:11px;">Export CSV</button></div>
         <div class="trades-scroll">
           <table class="trades-table">
             <thead><tr><th>Month</th><th>P&L</th><th>Return %</th><th>Trades</th><th>Win Rate</th></tr></thead>
@@ -1511,7 +1528,7 @@ function renderResults(data) {
     <!-- Trades Tab -->
     <div class="tab-content" id="tab-trades">
       <div class="trades-table-wrap">
-        <div class="chart-header">Trade Log (${m.total_trades} trades) <button onclick="exportCSV('trades')" style="float:right;background:var(--blue-dim);color:var(--blue);border:1px solid var(--border);border-radius:4px;padding:2px 10px;cursor:pointer;font-size:11px;">Export CSV</button></div>
+        <div class="chart-header">Trade Log (${m.total_trades} trades) <button onclick="exportCSV('trades')" style="float:right;background:var(--blue-dim);color:var(--blue);border:1px solid var(--border);border-radius:0;padding:2px 10px;cursor:pointer;font-size:11px;">Export CSV</button></div>
         <div class="trades-scroll">
           <table class="trades-table">
             <thead>
@@ -1665,12 +1682,53 @@ function createHeatmap(heatmapData) {
         : pnl < 0
           ? 'rgba(239,68,68,' + (0.1 + intensity * 0.7) + ')'
           : 'var(--surface2)';
-      html += '<div style="background:' + bg + ';padding:4px 2px;text-align:center;border-radius:2px;cursor:default;" title="' + days[d] + ' ' + h + ':00 — $' + pnl.toFixed(2) + ' (' + count + ' trades)">';
+      html += '<div style="background:' + bg + ';padding:4px 2px;text-align:center;border-radius:0;cursor:' + (count > 0 ? 'pointer' : 'default') + ';" title="' + days[d] + ' ' + h + ':00 — $' + pnl.toFixed(2) + ' (' + count + ' trades)" onclick="showHeatmapTrades(' + d + ',' + h + ')">';
       html += count > 0 ? count : '';
       html += '</div>';
     }
   }
   grid.innerHTML = html;
+}
+
+function showHeatmapTrades(day, hour) {
+  if (!window.lastResults || !window.lastResults.trades) return;
+  var days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  var trades = window.lastResults.trades.filter(function(t) {
+    if (!t.entry_date) return false;
+    try {
+      var dt = new Date(t.entry_date.replace(/\./g, '-'));
+      return dt.getDay() === (day + 1) % 7 && dt.getHours() === hour;
+    } catch(e) { return false; }
+  });
+
+  var el = document.getElementById('heatmapTradeList');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'heatmapTradeList';
+    document.getElementById('heatmapGrid').parentElement.appendChild(el);
+  }
+
+  if (trades.length === 0) {
+    el.innerHTML = '<div style="margin-top:12px;color:var(--text-dim);font-size:12px;">No trades at ' + days[day] + ' ' + hour + ':00</div>';
+    return;
+  }
+
+  var html = '<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">';
+  html += '<div style="font-weight:700;font-size:12px;margin-bottom:8px;color:var(--text);">' + trades.length + ' trade(s) on ' + days[day] + ' at ' + hour + ':00</div>';
+  html += '<table style="width:100%;border-collapse:collapse;font-size:11px;">';
+  html += '<tr style="color:var(--text-dim);"><th style="text-align:left;padding:4px;">Dir</th><th style="text-align:left;padding:4px;">Entry</th><th style="text-align:left;padding:4px;">Exit</th><th style="text-align:right;padding:4px;">P&L</th><th style="text-align:right;padding:4px;">R</th></tr>';
+  trades.forEach(function(t) {
+    var color = t.pnl > 0 ? 'var(--green)' : t.pnl < 0 ? 'var(--red)' : 'var(--text-dim)';
+    html += '<tr style="border-top:1px solid var(--border);">';
+    html += '<td style="padding:4px;color:' + (t.direction === 'long' ? 'var(--green)' : 'var(--red)') + ';">' + t.direction.toUpperCase() + '</td>';
+    html += '<td style="padding:4px;">' + (t.entry_date || '') + '</td>';
+    html += '<td style="padding:4px;">' + (t.exit_date || '') + '</td>';
+    html += '<td style="padding:4px;text-align:right;color:' + color + ';">$' + (t.pnl || 0).toFixed(2) + '</td>';
+    html += '<td style="padding:4px;text-align:right;">' + (t.r_multiple || '-') + 'R</td>';
+    html += '</tr>';
+  });
+  html += '</table></div>';
+  el.innerHTML = html;
 }
 
 function createRecoveryChart(underwater) {
@@ -1849,7 +1907,7 @@ async function runBacktest() {
       if (lineNum) {
         errorHtml += `<div style="color:var(--text-dim);font-size:12px;margin-top:8px;padding:0 4px;">
           The error is on <strong style="color:var(--red);">line ${lineNum}</strong> of your script.
-          <button onclick="jumpToLine(${lineNum})" style="background:var(--red-dim);color:var(--red);border:1px solid var(--red);border-radius:4px;padding:2px 10px;margin-left:8px;cursor:pointer;font-size:11px;">Go to Line ${lineNum}</button>
+          <button onclick="jumpToLine(${lineNum})" style="background:var(--red-dim);color:var(--red);border:1px solid var(--red);border-radius:0;padding:2px 10px;margin-left:8px;cursor:pointer;font-size:11px;">Go to Line ${lineNum}</button>
         </div>`;
       }
       results.innerHTML = errorHtml;
@@ -1931,20 +1989,20 @@ function addDateFilter(type) {
   const div = document.createElement('div');
   div.id = 'df_' + id;
   div.style.cssText = 'display:flex;gap:4px;align-items:center;margin-bottom:4px;';
-  const inputStyle = 'background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);padding:4px 6px;font-size:11px;font-family:inherit;';
+  const inputStyle = 'background:var(--bg);border:1px solid var(--border);border-radius:0;color:var(--text);padding:4px 6px;font-size:11px;font-family:inherit;';
   if (type === 'range') {
     div.innerHTML = `
       <input type="date" class="df-from" style="${inputStyle}flex:1;" title="From date">
       <span style="color:var(--text-dim);font-size:11px;">to</span>
       <input type="date" class="df-to" style="${inputStyle}flex:1;" title="To date">
-      <button onclick="document.getElementById('df_${id}').remove();saveDateFilters();" style="background:var(--red-dim);color:var(--red);border:1px solid var(--red);border-radius:4px;padding:2px 6px;cursor:pointer;font-size:10px;">x</button>
+      <button onclick="document.getElementById('df_${id}').remove();saveDateFilters();" style="background:var(--red-dim);color:var(--red);border:1px solid var(--red);border-radius:0;padding:2px 6px;cursor:pointer;font-size:10px;">x</button>
     `;
   } else {
     div.innerHTML = `
       <input type="date" class="df-from" style="${inputStyle}flex:1;" title="Date to exclude">
       <span style="color:var(--text-dim);font-size:11px;width:20px;text-align:center;">-</span>
       <span style="flex:1;"></span>
-      <button onclick="document.getElementById('df_${id}').remove();saveDateFilters();" style="background:var(--red-dim);color:var(--red);border:1px solid var(--red);border-radius:4px;padding:2px 6px;cursor:pointer;font-size:10px;">x</button>
+      <button onclick="document.getElementById('df_${id}').remove();saveDateFilters();" style="background:var(--red-dim);color:var(--red);border:1px solid var(--red);border-radius:0;padding:2px 6px;cursor:pointer;font-size:10px;">x</button>
     `;
   }
   document.getElementById('dateFilters').appendChild(div);
@@ -2204,7 +2262,7 @@ function setEngine(eng) {
 
   if (eng === 'mql5') {
     title.textContent = 'MQL5 Expert Advisor';
-    tag.textContent = 'MQL5 Engine';
+    tag.textContent = 'MQL5';
     btnMql5.classList.add('active');
     btnPine.classList.remove('active');
     editor.placeholder = MQL5_PLACEHOLDER;
@@ -2214,7 +2272,7 @@ function setEngine(eng) {
     else if (!editor.value.trim()) editor.value = '';
   } else {
     title.textContent = 'Pine Script Strategy';
-    tag.textContent = 'Pine Script Engine';
+    tag.textContent = 'Pine';
     btnPine.classList.add('active');
     btnMql5.classList.remove('active');
     editor.placeholder = PINE_PLACEHOLDER;
