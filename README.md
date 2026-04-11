@@ -4,7 +4,29 @@ A web-based backtesting engine that runs **Pine Script v5** and **MQL5 Expert Ad
 
 ## Changelog
 
-### v3.4 — Dark Theme Redesign (Latest)
+### v3.5 — VWAP, Time Functions, Live Strategy Variables (Latest)
+
+**New Indicators & Functions**
+- `ta.vwap()` — volume-weighted average price with automatic daily reset
+- `hour(time, "America/New_York")` — extract hour with timezone conversion
+- `minute(time, timezone)` — extract minute with timezone conversion
+- Broker UTC offset → target timezone conversion for session-based strategies
+
+**Strategy Built-in Variables (Live Per-Bar)**
+- `strategy.netprofit` — running net P&L, updated after every fill
+- `strategy.grossprofit` / `strategy.grossloss` — cumulative win/loss totals
+- `strategy.wintrades` / `strategy.losstrades` — win/loss trade counts
+- `strategy.closedtrades` — total closed trade count
+- `strategy.closedtrades.profit(idx)` — P&L of specific closed trade by index
+- `strategy.closedtrades.entry_price(idx)` / `.exit_price(idx)` / `.size()`
+- `strategy.initial_capital` — starting capital value
+
+**UI & Dev**
+- Custom dark modal system replacing all browser popups (alert/confirm/prompt)
+- No-cache headers + template auto-reload for development
+- Header layout and centering fixes
+
+### v3.4 — Dark Theme Redesign
 
 **UI Redesign**
 - Pure black theme with dark grey accents
@@ -91,7 +113,9 @@ A web-based backtesting engine that runs **Pine Script v5** and **MQL5 Expert Ad
 
 **Indicators & Analysis**
 - **Wilder's RSI/ATR** — proper exponential smoothing
-- **35+ built-in indicators** — SMA, EMA, RSI, ATR, MACD, BB, Stochastic, VWMA, pivots, crossover, valuewhen, barssince, momentum, percentrank, swma
+- **35+ built-in indicators** — SMA, EMA, RSI, ATR, MACD, BB, Stochastic, VWMA, VWAP, pivots, crossover, valuewhen, barssince, momentum, percentrank, swma
+- **Time functions** — `hour()`, `minute()` with timezone conversion for session-based strategies
+- **Live strategy variables** — `strategy.netprofit`, `wintrades`, `losstrades`, `closedtrades` updated per-bar after fills
 - **Platform SMT divergence** — works with any strategy
 - **Walk-forward optimization** — parallel rolling train/test parameter sweep
 
@@ -174,6 +198,10 @@ Open **http://localhost:1234** in your browser.
 | `ta.crossover/crossunder/highest/lowest` | Supported |
 | `ta.pivothigh/pivotlow/valuewhen/barssince` | Supported |
 | `ta.rising/falling/mom/percentrank/swma` | Supported |
+| `ta.vwap()` with daily reset | Supported |
+| `hour(time, timezone)`, `minute()` | Supported |
+| `strategy.netprofit/wintrades/closedtrades` | Supported (live per-bar) |
+| `strategy.closedtrades.profit/entry_price/exit_price` | Supported |
 | `request.security()` (MTF + SMT) | Supported |
 | `math.*`, `array.*`, `str.*` | Supported |
 
