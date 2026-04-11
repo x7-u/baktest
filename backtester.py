@@ -89,7 +89,8 @@ class OptionTrade:
                  'entry_price', 'exit_bar', 'exit_price', 'qty', 'multiplier',
                  'pnl', 'pnl_pct', 'comment', 'exit_reason', 'entry_date',
                  'exit_date', 'bars_held', 'greeks_at_entry', 'spread_id',
-                 'last_known_mark', 'entry_commission')
+                 'last_known_mark', 'entry_commission',
+                 'mae', 'mfe', 'r_multiple', 'sl_price', 'tp_price')
 
     def __init__(self, contract_type, strike, expiry, direction, entry_bar,
                  entry_price, qty=1, multiplier=100, comment='', entry_date=None,
@@ -109,6 +110,9 @@ class OptionTrade:
         self.spread_id = spread_id          # links legs of multi-leg strategies
         self.last_known_mark = entry_price  # fallback for mark-to-market
         self.entry_commission = 0.0         # stored for accurate pnl reporting
+        self.mae = 0.0; self.mfe = 0.0     # compatibility with calculate_metrics
+        self.r_multiple = 0.0
+        self.sl_price = None; self.tp_price = None
 
     def close(self, exit_bar, exit_price, commission_cost=0.0, exit_date=None):
         self.exit_bar = exit_bar; self.exit_price = exit_price
@@ -1133,8 +1137,10 @@ class Backtester:
             excluded_count = len(self.trades) - len(filtered)
             filtered_trades = filtered
 
+        # Combine equity + options trades for unified metrics
+        all_trades = list(filtered_trades) + list(self.closed_options)
         metrics = calculate_metrics(
-            filtered_trades, self.equity_curve, self.drawdown_curve,
+            all_trades, self.equity_curve, self.drawdown_curve,
             self.initial_capital, self.data, self._exposure_pct)
         metrics['excluded_trades'] = excluded_count
 

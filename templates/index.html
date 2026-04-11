@@ -902,6 +902,17 @@ function switchTab(tabName) {
   document.querySelectorAll('.tab-content').forEach(t => t.classList.toggle('active', t.id === 'tab-' + tabName));
 }
 
+function filterTrades(type) {
+  document.querySelectorAll('.trades-table tbody tr[data-trade-type]').forEach(function(r) {
+    if (type === 'all') r.style.display = '';
+    else r.style.display = r.getAttribute('data-trade-type') === type ? '' : 'none';
+  });
+  document.querySelectorAll('.trades-table-wrap .bar-chip').forEach(function(c) {
+    var label = c.textContent.trim().toLowerCase();
+    c.classList.toggle('active', (type === 'all' && label === 'all') || (type === 'equity' && label === 'equity') || (type === 'option' && label === 'options'));
+  });
+}
+
 // Charts
 let priceChart = null;
 let equityChartJS = null;
@@ -1505,6 +1516,21 @@ function renderResults(data) {
         <div class="value ${m.profit_factor >= 1 ? 'positive' : 'negative'}">${m.profit_factor}</div>
         <div class="sub">Max DD: ${m.max_drawdown}%</div>
       </div>
+      ${(function() {
+        var optTrades = data.trades.filter(function(t) { return t.trade_type === 'option'; });
+        if (optTrades.length === 0) return '';
+        var eqTrades = data.trades.filter(function(t) { return t.trade_type !== 'option'; });
+        var optPnl = optTrades.reduce(function(s, t) { return s + t.pnl; }, 0);
+        var eqPnl = eqTrades.reduce(function(s, t) { return s + t.pnl; }, 0);
+        var optWins = optTrades.filter(function(t) { return t.pnl > 0; }).length;
+        var optWR = optTrades.length > 0 ? Math.round(optWins / optTrades.length * 100) : 0;
+        return '<div class="metric-card"><div class="label">Options P&L</div>' +
+          '<div class="value ' + (optPnl >= 0 ? 'positive' : 'negative') + '">$' + optPnl.toFixed(2) + '</div>' +
+          '<div class="sub">' + optTrades.length + ' trades | ' + optWR + '% win</div></div>' +
+          '<div class="metric-card"><div class="label">Equity P&L</div>' +
+          '<div class="value ' + (eqPnl >= 0 ? 'positive' : 'negative') + '">$' + eqPnl.toFixed(2) + '</div>' +
+          '<div class="sub">' + eqTrades.length + ' trades</div></div>';
+      })()}
     </div>
 
     ${data.funded && data.funded.enabled ? `
@@ -1710,13 +1736,18 @@ function renderResults(data) {
     <!-- Trades Tab -->
     <div class="tab-content" id="tab-trades">
       <div class="trades-table-wrap">
-        <div class="chart-header">Trade Log (${m.total_trades} trades) <button onclick="exportCSV('trades')" style="float:right;background:var(--blue-dim);color:var(--blue);border:1px solid var(--border);border-radius:0;padding:2px 10px;cursor:pointer;font-size:11px;">Export CSV</button></div>
+        <div class="chart-header">Trade Log (${data.trades.length} trades)
+          ${data.trades.some(function(t){return t.trade_type==='option';}) ? '<div class="bar-chips" style="display:inline-flex;margin-left:12px;vertical-align:middle;"><button class="bar-chip active" onclick="filterTrades(\'all\')">All</button><button class="bar-chip" onclick="filterTrades(\'equity\')">Equity</button><button class="bar-chip" onclick="filterTrades(\'option\')">Options</button></div>' : ''}
+          <button onclick="exportCSV('trades')" style="float:right;background:var(--blue-dim);color:var(--blue);border:1px solid var(--border);border-radius:0;padding:2px 10px;cursor:pointer;font-size:11px;">Export CSV</button>
+        </div>
         <div class="trades-scroll">
           <table class="trades-table">
             <thead>
               <tr>
                 <th>#</th>
+                <th>Type</th>
                 <th>Direction</th>
+                ${data.trades.some(function(t){return t.trade_type==='option';}) ? '<th>Strike</th><th>C/P</th><th>Expiry</th>' : ''}
                 <th>Entry Date</th>
                 <th>Entry Price</th>
                 <th>Exit Date</th>
@@ -1724,25 +1755,25 @@ function renderResults(data) {
                 <th>Qty</th>
                 <th>P&L</th>
                 <th>P&L %</th>
-                <th>R</th>
                 <th>Exit</th>
                 <th>Bars</th>
               </tr>
             </thead>
             <tbody>
               ${data.trades.map((t, i) => `
-                <tr>
+                <tr data-trade-type="${t.trade_type || 'equity'}">
                   <td>${i + 1}</td>
+                  <td><span style="font-size:10px;padding:2px 6px;border:1px solid ${t.trade_type==='option' ? '#06b6d4' : 'var(--border)'};color:${t.trade_type==='option' ? '#06b6d4' : 'var(--text-dim)'}">${t.trade_type==='option' ? 'OPT' : 'EQ'}</span></td>
                   <td><span class="badge ${t.direction}">${t.direction}</span></td>
+                  ${data.trades.some(function(t){return t.trade_type==='option';}) ? '<td>' + (t.strike || '-') + '</td><td>' + (t.contract_type ? t.contract_type.toUpperCase() : '-') + '</td><td style="font-size:10px;">' + (t.expiry || '-') + '</td>' : ''}
                   <td>${t.entry_date || t.entry_bar}</td>
                   <td>${t.entry_price}</td>
                   <td>${t.exit_date || t.exit_bar}</td>
                   <td>${t.exit_price || '-'}</td>
-                  <td>${t.qty}</td>
+                  <td>${t.trade_type==='option' ? t.qty + 'x' + (t.multiplier||100) : t.qty}</td>
                   <td class="${pnlClass(t.pnl)}">${formatNum(t.pnl, '$')}</td>
                   <td class="${pnlClass(t.pnl_pct)}">${t.pnl_pct > 0 ? '+' : ''}${t.pnl_pct}%</td>
-                  <td class="${pnlClass(t.r_multiple || 0)}">${t.r_multiple || '-'}R</td>
-                  <td><span style="font-size:10px;color:${t.exit_reason==='tp'?'var(--green)':t.exit_reason==='sl'?'var(--red)':'var(--text-dim)'}">${t.exit_reason||'-'}</span></td>
+                  <td><span style="font-size:10px;color:${t.exit_reason==='tp'?'var(--green)':t.exit_reason==='sl'?'var(--red)':t.exit_reason==='exercise'?'#06b6d4':t.exit_reason==='expiry'?'#f59e0b':'var(--text-dim)'}">${t.exit_reason||'-'}</span></td>
                   <td>${t.bars_held}</td>
                 </tr>
               `).join('')}
