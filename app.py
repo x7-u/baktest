@@ -43,6 +43,8 @@ def sanitize_for_json(obj):
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # disable static file caching
+app.config['TEMPLATES_AUTO_RELOAD'] = True   # reload templates on change
 
 UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -128,7 +130,12 @@ def parse_metatrader_csv(filepath):
 
 @app.route('/')
 def index():
-    return send_from_directory('templates', 'index.html')
+    from flask import make_response
+    resp = make_response(send_from_directory('templates', 'index.html'))
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
 
 
 def _setup_backtest():

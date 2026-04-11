@@ -254,6 +254,26 @@ class Backtester:
         interpreter.variables['__mtf__'] = self._mtf
         interpreter.variables['__utc_offset__'] = self.utc_offset
 
+        # Build timestamps for hour()/minute()/VWAP functions (needed by Cython interpreter)
+        import pandas as _pd
+        _timestamps = []
+        _dt_col = None
+        for _c in ('datetime', 'date', 'Date', 'Datetime'):
+            if _c in self.data.columns:
+                _dt_col = _c; break
+        for _i in range(len(self.data)):
+            _ts = 0
+            if _dt_col:
+                try:
+                    _dt = _pd.Timestamp(self.data.iloc[_i][_dt_col])
+                    _ts = int(_dt.timestamp())
+                except Exception:
+                    _ts = 1700000000 + _i * 300
+            else:
+                _ts = 1700000000 + _i * 300
+            _timestamps.append(_ts)
+        interpreter.variables['__timestamps__'] = _timestamps
+
         # Detect base/profit currencies from symbol name (e.g. NZDCHF → NZD, CHF)
         sym = self.symbol_name
         if len(sym) >= 6:
@@ -393,6 +413,21 @@ class Backtester:
                 interpreter.variables['_equity'] = balance + total_unrealized
                 interpreter.variables['_open_profit'] = total_unrealized
                 interpreter.variables['_entry_price'] = self.open_position.entry_price if self.open_position else NA
+
+            # ── Update ALL strategy.* built-in variables ──
+            # These must be set AFTER order fills and BEFORE script execution
+            net_profit = balance - self.initial_capital
+            win_trades = sum(1 for t in self.closed_trades if t.pnl > 0)
+            loss_trades = sum(1 for t in self.closed_trades if t.pnl <= 0)
+            closed_count = len(self.closed_trades)
+
+            interpreter.variables['_netprofit'] = net_profit
+            interpreter.variables['_grossprofit'] = sum(t.pnl for t in self.closed_trades if t.pnl > 0)
+            interpreter.variables['_grossloss'] = sum(t.pnl for t in self.closed_trades if t.pnl < 0)
+            interpreter.variables['_wintrades'] = win_trades
+            interpreter.variables['_losstrades'] = loss_trades
+            interpreter.variables['_closedtrades'] = closed_count
+            interpreter.variables['_closedtrades_list'] = self.closed_trades  # for closedtrades.profit(idx)
 
             # ── Platform SMT divergence ──
             if self._smt_engine is not None and i < len(self.smt_data):

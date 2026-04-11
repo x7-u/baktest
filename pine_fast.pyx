@@ -366,6 +366,12 @@ cdef class FastPineInterpreter:
         v['hl2'] = (h + l) * 0.5
         v['hlc3'] = (h + l + c) / 3.0
         v['ohlc4'] = (o + h + l + c) * 0.25
+        # Set time variable for hour()/minute() functions
+        cdef list _ts = self.variables.get('__timestamps__', [])
+        if _ts and idx < len(_ts):
+            v['time'] = _ts[idx]
+        else:
+            v['time'] = 0
 
         cdef list stmts = self.ast.stmts
         cdef int i
@@ -670,6 +676,13 @@ cdef class FastPineInterpreter:
         if name == 'strategy.position_size': return self.variables.get('_position_size', 0)
         if name == 'strategy.equity': return self.variables.get('_equity', 10000)
         if name == 'strategy.openprofit': return self.variables.get('_open_profit', 0)
+        if name == 'strategy.netprofit': return self.variables.get('_netprofit', 0)
+        if name == 'strategy.grossprofit': return self.variables.get('_grossprofit', 0)
+        if name == 'strategy.grossloss': return self.variables.get('_grossloss', 0)
+        if name == 'strategy.wintrades': return self.variables.get('_wintrades', 0)
+        if name == 'strategy.losstrades': return self.variables.get('_losstrades', 0)
+        if name == 'strategy.closedtrades': return self.variables.get('_closedtrades', 0)
+        if name == 'strategy.initial_capital': return self.variables.get('_equity', 10000) - self.variables.get('_netprofit', 0)
         if name == 'math.pi': return M_PI
         if name == 'math.e': return 2.718281828459045
         if name == 'barstate.islast':
@@ -752,7 +765,10 @@ cdef class FastPineInterpreter:
         if name in ('ta.valuewhen', 'valuewhen', 'ta.barssince', 'barssince',
                      'ta.highestbars', 'highestbars', 'ta.lowestbars', 'lowestbars',
                      'ta.rising', 'ta.falling', 'ta.mom', 'mom',
-                     'ta.vwma', 'vwma', 'ta.percentrank', 'ta.swma'):
+                     'ta.vwma', 'vwma', 'ta.percentrank', 'ta.swma',
+                     'ta.vwap', 'vwap', 'hour', 'minute',
+                     'strategy.closedtrades.profit', 'strategy.closedtrades.entry_price',
+                     'strategy.closedtrades.exit_price', 'strategy.closedtrades.size'):
             from pine_parser import PineInterpreter as _PI
             # Create a temporary Python interpreter method call
             pi = _PI.__new__(_PI)
@@ -760,6 +776,9 @@ cdef class FastPineInterpreter:
             pi.series_data = self.series_data
             pi.bar_index = self.bar_index
             pi._bar_cache = {}
+            pi._max_exec_count = 0
+            pi._max_exec_limit = 500000
+            pi._timestamps = self.variables.get('__timestamps__', [])
             return pi._call(node)
 
         # Math

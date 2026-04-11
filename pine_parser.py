@@ -713,8 +713,14 @@ class PineInterpreter:
             self.series_data[col] = Series()
         # Pre-scan AST: only track series for variables used in history refs
         self._series_vars = self._collect_history_vars(self.ast.stmts)
-        # Precompute row data as dicts for fast access
+        # Precompute row data and timestamps
         self._row_cache = []
+        self._timestamps = []
+        date_col = None
+        for col in ('datetime', 'date', 'Date', 'Datetime'):
+            if col in bars.columns:
+                date_col = col; break
+
         for i in range(len(bars)):
             r = bars.iloc[i]
             self._row_cache.append({
@@ -722,6 +728,20 @@ class PineInterpreter:
                 'low': r.get('low', 0), 'close': r.get('close', 0),
                 'volume': r.get('volume', 0),
             })
+            ts = 0
+            if date_col:
+                try:
+                    import pandas as pd
+                    dt = pd.Timestamp(r[date_col])
+                    ts = int(dt.timestamp())
+                except Exception:
+                    ts = 1700000000 + i * 300
+            else:
+                ts = 1700000000 + i * 300
+            self._timestamps.append(ts)
+
+        # Store timestamps in variables dict so Cython delegation can access them
+        self.variables['__timestamps__'] = self._timestamps
 
         # Auto-detect instrument type from price levels for syminfo
         avg_price = bars['close'].iloc[:min(100, len(bars))].mean() if len(bars) > 0 else 1.0
@@ -773,6 +793,13 @@ class PineInterpreter:
         v['bar_index'] = idx; v['close'] = c; v['open'] = o
         v['high'] = h; v['low'] = l; v['volume'] = row['volume']
         v['hl2'] = (h + l) / 2; v['hlc3'] = (h + l + c) / 3; v['ohlc4'] = (o + h + l + c) / 4
+        # Set time variable (Unix timestamp) for hour()/minute() functions
+        if hasattr(self, '_timestamps') and idx < len(self._timestamps):
+            v['time'] = self._timestamps[idx]
+        elif '__timestamps__' in v and idx < len(v['__timestamps__']):
+            v['time'] = v['__timestamps__'][idx]
+        else:
+            v['time'] = 0
 
         for stmt in self.ast.stmts:
             self._exec(stmt)
@@ -975,6 +1002,13 @@ class PineInterpreter:
             'strategy.position_size': self.variables.get('_position_size', 0),
             'strategy.equity': self.variables.get('_equity', 10000),
             'strategy.openprofit': self.variables.get('_open_profit', 0),
+            'strategy.netprofit': self.variables.get('_netprofit', 0),
+            'strategy.grossprofit': self.variables.get('_grossprofit', 0),
+            'strategy.grossloss': self.variables.get('_grossloss', 0),
+            'strategy.wintrades': self.variables.get('_wintrades', 0),
+            'strategy.losstrades': self.variables.get('_losstrades', 0),
+            'strategy.closedtrades': self.variables.get('_closedtrades', 0),
+            'strategy.initial_capital': self.variables.get('_equity', 10000) - self.variables.get('_netprofit', 0),
         }
         # strategy.opentrades.entry_price(0) is handled as a function call
         if name in constants: return constants[name]
@@ -1084,6 +1118,30 @@ class PineInterpreter:
         if name == 'strategy.opentrades.entry_price':
             return self.variables.get('_entry_price', NA)
 
+        if name == 'strategy.closedtrades.profit':
+            idx = int(args[0]) if args else 0
+            trades_list = self.variables.get('_closedtrades_list', [])
+            if 0 <= idx < len(trades_list):
+                return trades_list[idx].pnl
+            return NA
+
+        if name == 'strategy.closedtrades.entry_price':
+            idx = int(args[0]) if args else 0
+            trades_list = self.variables.get('_closedtrades_list', [])
+            if 0 <= idx < len(trades_list):
+                return trades_list[idx].entry_price
+            return NA
+
+        if name == 'strategy.closedtrades.exit_price':
+            idx = int(args[0]) if args else 0
+            trades_list = self.variables.get('_closedtrades_list', [])
+            if 0 <= idx < len(trades_list):
+                return trades_list[idx].exit_price
+            return NA
+
+        if name == 'strategy.closedtrades.size':
+            return len(self.variables.get('_closedtrades_list', []))
+
         # Input functions
         if name.startswith('input'):
             defval = args[0] if args else kwargs.get('defval', 0)
@@ -1120,6 +1178,8 @@ class PineInterpreter:
             return NA
 
         # Technical Indicators
+        if name in ('ta.vwap', 'vwap'):
+            return self._ta_vwap(args, kwargs)
         if name in ('ta.pivothigh', 'pivothigh'):
             return self._ta_pivothigh(args, kwargs)
         if name in ('ta.pivotlow', 'pivotlow'):
@@ -1386,6 +1446,52 @@ class PineInterpreter:
                 return max(vals) if vals else NA
             return NA
 
+        # Time functions
+        if name == 'hour':
+            # hour(time, timezone) — extract hour from timestamp
+            ts = args[0] if args else self.variables.get('time', 0)
+            if is_na(ts): return NA
+            try:
+                import datetime as _dt
+                broker_off = int(self.variables.get('__utc_offset__', 0))
+                # Target timezone offset
+                tz_str = args[1] if len(args) > 1 else None
+                target_off = broker_off  # default: broker time
+                if tz_str and isinstance(tz_str, str):
+                    if 'New_York' in tz_str: target_off = -5
+                    elif 'Chicago' in tz_str: target_off = -6
+                    elif 'London' in tz_str: target_off = 0
+                    elif 'Tokyo' in tz_str: target_off = 9
+                    elif 'Sydney' in tz_str: target_off = 11
+                # Convert: broker_time → UTC → target timezone
+                # ts is Unix timestamp of broker local time (treated as UTC by fromtimestamp)
+                # Adjust: subtract broker offset to get real UTC, then add target offset
+                adjusted_ts = int(ts) - broker_off * 3600 + target_off * 3600
+                t = _dt.datetime.utcfromtimestamp(adjusted_ts)
+                return t.hour
+            except Exception:
+                return 0
+
+        if name == 'minute':
+            ts = args[0] if args else self.variables.get('time', 0)
+            if is_na(ts): return NA
+            try:
+                import datetime as _dt
+                broker_off = int(self.variables.get('__utc_offset__', 0))
+                tz_str = args[1] if len(args) > 1 else None
+                target_off = broker_off
+                if tz_str and isinstance(tz_str, str):
+                    if 'New_York' in tz_str: target_off = -5
+                    elif 'Chicago' in tz_str: target_off = -6
+                    elif 'London' in tz_str: target_off = 0
+                    elif 'Tokyo' in tz_str: target_off = 9
+                    elif 'Sydney' in tz_str: target_off = 11
+                adjusted_ts = int(ts) - broker_off * 3600 + target_off * 3600
+                t = _dt.datetime.utcfromtimestamp(adjusted_ts)
+                return t.minute
+            except Exception:
+                return 0
+
         # Visual no-ops
         if name in ('plot', 'plotshape', 'plotchar', 'plotarrow', 'bgcolor',
                      'barcolor', 'hline', 'fill', 'label.new', 'label.delete',
@@ -1393,8 +1499,7 @@ class PineInterpreter:
                      'box.new', 'box.delete', 'box.set_right',
                      'table.new', 'table.cell',
                      'alertcondition', 'alert', 'color.new', 'color.rgb',
-                     'log.info', 'log.warning', 'log.error', 'timestamp',
-                     'time'):
+                     'log.info', 'log.warning', 'log.error', 'timestamp'):
             return None if name != 'color.new' else (args[0] if args else '#000000')
 
         # User-defined functions
@@ -1730,6 +1835,51 @@ class PineInterpreter:
         result = (basis, basis + mult * std, basis - mult * std)
         self._bar_cache[cache_key] = result
         return result
+
+
+    def _ta_vwap(self, args, kwargs):
+        """VWAP — cumulative volume-weighted average price, resets daily."""
+        # Source defaults to hlc3 (typical price)
+        source = args[0] if args else self.variables.get('hlc3', self.variables.get('close', 0))
+        current_vol = self.variables.get('volume', 0)
+
+        if is_na(source) or is_na(current_vol):
+            return NA
+
+        current_price = float(source)
+        current_vol = float(current_vol)
+
+        # Get day key from timestamp for daily reset
+        day_key = ''
+        timestamps = getattr(self, '_timestamps', None) or self.variables.get('__timestamps__', [])
+        if timestamps and self.bar_index < len(timestamps):
+            ts = timestamps[self.bar_index]
+            try:
+                import datetime as _dt
+                utc_off = int(self.variables.get('__utc_offset__', 0))
+                t = _dt.datetime.utcfromtimestamp(ts + utc_off * 3600)
+                day_key = t.strftime('%Y-%m-%d')
+            except Exception:
+                day_key = str(self.bar_index // 288)  # fallback: ~288 M5 bars per day
+        else:
+            day_key = str(self.bar_index // 288)
+
+        # Check for day boundary reset
+        prev_day = self.variables.get('_vwap_day', '')
+        if prev_day != day_key:
+            self.variables['_vwap_num'] = 0.0
+            self.variables['_vwap_den'] = 0.0
+            self.variables['_vwap_day'] = day_key
+
+        # Accumulate
+        self.variables['_vwap_num'] = self.variables.get('_vwap_num', 0.0) + current_price * current_vol
+        self.variables['_vwap_den'] = self.variables.get('_vwap_den', 0.0) + current_vol
+
+        den = self.variables['_vwap_den']
+        if den == 0:
+            return NA
+
+        return self.variables['_vwap_num'] / den
 
 
 def parse_pine(source: str) -> Program:

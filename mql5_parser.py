@@ -2040,6 +2040,35 @@ class MQL5Interpreter:
         if name in ('Print', 'Comment', 'Alert', 'PrintFormat', 'printf'):
             return None  # no-op
 
+        # ── VWAP ──
+        if name in ('ta.vwap', 'vwap', 'VWAP'):
+            source = args[0] if args else self.variables.get('close', 0)
+            current_vol = self.variables.get('volume', 0)
+            if is_na(source) or is_na(current_vol): return NA
+            current_price = float(source)
+            current_vol = float(current_vol)
+            day_key = ''
+            if self.bar_index < len(self._timestamps):
+                ts = self._timestamps[self.bar_index]
+                try:
+                    import datetime as _dt
+                    utc_off = int(self.variables.get('__utc_offset__', 0))
+                    t = _dt.datetime.utcfromtimestamp(ts + utc_off * 3600)
+                    day_key = t.strftime('%Y-%m-%d')
+                except Exception:
+                    day_key = str(self.bar_index // 288)
+            else:
+                day_key = str(self.bar_index // 288)
+            prev_day = self.variables.get('_vwap_day', '')
+            if prev_day != day_key:
+                self.variables['_vwap_num'] = 0.0
+                self.variables['_vwap_den'] = 0.0
+                self.variables['_vwap_day'] = day_key
+            self.variables['_vwap_num'] = self.variables.get('_vwap_num', 0.0) + current_price * current_vol
+            self.variables['_vwap_den'] = self.variables.get('_vwap_den', 0.0) + current_vol
+            den = self.variables['_vwap_den']
+            return self.variables['_vwap_num'] / den if den > 0 else NA
+
         # ── Platform SMT Divergence (any script can use these) ──
         if name == 'SMTDivergence' or name == 'IsSMTDivergence':
             # SMTDivergence(1) = bullish, SMTDivergence(-1) = bearish, SMTDivergence(0) = any

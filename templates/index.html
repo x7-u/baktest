@@ -43,13 +43,14 @@ body {
 * { scrollbar-width: thin; scrollbar-color: #333 #0a0a0a; }
 
 .header {
-  padding: 20px 32px;
+  padding: 22px 32px;
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 16px;
-  background: var(--surface);
+  gap: 14px;
+  background: var(--bg);
+  min-height: 70px;
 }
 .header h1 {
   font-family: 'Lobster', cursive;
@@ -91,7 +92,7 @@ body {
   border-radius: 0;
   background: currentColor;
 }
-.main { display: flex; flex-direction: row-reverse; height: calc(100vh - 65px); }
+.main { display: flex; flex-direction: row-reverse; height: calc(100vh - 70px); }
 .sidebar {
   width: 420px;
   min-width: 420px;
@@ -460,6 +461,42 @@ textarea.pine-editor:focus { border-color: var(--blue); }
   vertical-align: middle;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Custom Modal */
+.modal-overlay {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(0,0,0,0.7); z-index: 9999;
+  display: flex; align-items: center; justify-content: center;
+}
+.modal-box {
+  background: #0d0d0d; border: 1px solid #333; padding: 24px 28px;
+  min-width: 340px; max-width: 480px;
+  font-family: 'Courier New', Courier, monospace;
+}
+.modal-box h3 {
+  font-size: 14px; font-weight: 700; color: #e0e0e0;
+  margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px;
+}
+.modal-box p {
+  font-size: 12px; color: #999; margin-bottom: 20px; line-height: 1.5;
+}
+.modal-box input[type="text"] {
+  width: 100%; background: #000; border: 1px solid #333; color: #e0e0e0;
+  padding: 8px 12px; font-size: 13px; font-family: 'Courier New', Courier, monospace;
+  margin-bottom: 16px;
+}
+.modal-box input[type="text"]:focus { border-color: #555; outline: none; }
+.modal-btns {
+  display: flex; gap: 8px; justify-content: flex-end;
+}
+.modal-btns button {
+  padding: 8px 20px; font-size: 12px; font-weight: 700; cursor: pointer;
+  font-family: 'Courier New', Courier, monospace; text-transform: uppercase;
+  border: 1px solid #333; background: #000; color: #999; transition: all 0.15s;
+}
+.modal-btns button:hover { background: #222; color: #fff; }
+.modal-btns button.primary { border-color: #555; color: #e0e0e0; }
+.modal-btns button.primary:hover { background: #333; }
 
 /* Responsive */
 @media (max-width: 1200px) {
@@ -850,7 +887,7 @@ var _compareMode = false;
 
 function saveCurrentRun() {
   if (!window.lastResults) return;
-  var label = prompt('Name this run:', 'Run ' + (_savedRuns.length + 1));
+  modalPrompt('Name this run:', 'Run ' + (_savedRuns.length + 1), 'Save Run').then(function(label) {
   if (!label) return;
   var eq = window.lastResults.equity_curve;
   _savedRuns.push({
@@ -869,7 +906,8 @@ function saveCurrentRun() {
     _savedRuns = _savedRuns.slice(-10);
   }
   localStorage.setItem('_bt_savedRuns', JSON.stringify(_savedRuns));
-  alert('Run saved: ' + label);
+  modalAlert('Run saved: ' + label, 'Saved');
+  }); // end modalPrompt then
 }
 
 function toggleCompare() {
@@ -883,11 +921,12 @@ function toggleCompare() {
 }
 
 function clearSavedRuns() {
-  if (!confirm('Clear all saved runs?')) return;
+  modalConfirm('Clear all saved runs?', 'Clear Runs').then(function(ok) { if (!ok) return;
   _savedRuns = [];
   localStorage.removeItem('_bt_savedRuns');
   _compareMode = false;
   if (window.lastResults) createEquityChart(window.lastResults.equity_curve);
+  }); // end modalConfirm then
 }
 
 function destroyCharts() {
@@ -1801,15 +1840,15 @@ async function runBacktest() {
 
   if (!isMT5Mode) {
     const file = document.getElementById('csvFile').files[0];
-    if (!file) { alert('Please upload a CSV file first.'); return; }
+    if (!file) { modalAlert('Please upload a CSV file first.', 'Missing Data'); return; }
   } else {
     const sym = document.getElementById('mt5Symbol').value.trim();
-    if (!sym) { alert('Please enter a symbol (e.g. EURUSD).'); return; }
+    if (!sym) { modalAlert('Please enter a symbol (e.g. EURUSD).', 'Missing Symbol'); return; }
     if (!document.getElementById('mt5DateFrom').value || !document.getElementById('mt5DateTo').value) {
-      alert('Please select a date range.'); return;
+      modalAlert('Please select a date range.', 'Missing Dates'); return;
     }
   }
-  if (!script.trim()) { alert('Please enter a strategy script.'); return; }
+  if (!script.trim()) { modalAlert('Please enter a strategy script.', 'Missing Script'); return; }
 
   btn.disabled = true;
   btn.classList.add('running');
@@ -1922,7 +1961,7 @@ async function runBacktest() {
       progText.textContent = 'Cancelled';
       progBar.style.background = 'var(--red)';
     } else {
-      alert('Error: ' + err.message + '\n\nMake sure the Flask server is running.');
+      modalAlert(err.message, 'Error');
     }
   } finally {
     clearInterval(progInterval);
@@ -2111,23 +2150,26 @@ function applyProfileData(data) {
 }
 
 function saveProfile() {
-  const name = prompt('Profile name:');
+  modalPrompt('Enter a name for this profile:', '', 'Save Profile').then(function(name) {
   if (!name) return;
   const profiles = JSON.parse(localStorage.getItem('_bt_profiles') || '{}');
   profiles[name] = getProfileData();
   localStorage.setItem('_bt_profiles', JSON.stringify(profiles));
   renderProfiles();
   document.getElementById('profileSelect').value = name;
+  }); // end modalPrompt then
 }
 
 function loadProfile(name) {
   if (!name) return; // Default selected
-  if (!confirm('Load profile "' + name + '"? Current settings will be overwritten.')) {
+  modalConfirm('Load profile "' + name + '"? Current settings will be overwritten.', 'Load Profile').then(function(ok) {
+  if (!ok) {
     document.getElementById('profileSelect').value = '';
     return;
   }
   const profiles = JSON.parse(localStorage.getItem('_bt_profiles') || '{}');
   if (profiles[name]) applyProfileData(profiles[name]);
+  }); // end modalConfirm then
 }
 
 function deleteProfile() {
@@ -2358,7 +2400,7 @@ async function runOptimization() {
   const btn = document.getElementById('btnOptimize');
   const file = document.getElementById('csvFile').files[0];
   const script = document.getElementById('scriptEditor').value;
-  if (!file || !script.trim()) { alert('Upload CSV and enter a strategy first.'); return; }
+  if (!file || !script.trim()) { modalAlert('Upload CSV and enter a strategy first.', 'Missing Data'); return; }
 
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Optimizing...';
@@ -2388,10 +2430,10 @@ async function runOptimization() {
   try {
     const resp = await fetch('/api/optimize', { method: 'POST', body: formData });
     const data = await resp.json();
-    if (data.error) { alert(data.error); return; }
+    if (data.error) { modalAlert(data.error, 'Optimization Error'); return; }
     renderOptResults(data);
   } catch (err) {
-    alert('Optimization error: ' + err.message);
+    modalAlert(err.message, 'Optimization Error');
   } finally {
     btn.disabled = false;
     btn.innerHTML = 'Walk-Forward Optimize';
@@ -2468,11 +2510,79 @@ function exportScreenshot() {
     tabs.forEach(function(t, i) {
       t.style.display = origDisplay[i];
     });
-    alert('Screenshot failed: ' + err.message);
+    modalAlert(err.message, 'Screenshot Failed');
   });
 }
 
 // ── Initialize on page ready ──
+// ── Custom Modal System (replaces alert/confirm/prompt) ──
+function showModal(opts) {
+  return new Promise(function(resolve) {
+    var overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    var box = document.createElement('div');
+    box.className = 'modal-box';
+    var html = '<h3>' + (opts.title || 'Notice') + '</h3>';
+    html += '<p>' + (opts.message || '') + '</p>';
+    if (opts.input) {
+      html += '<input type="text" id="modalInput" value="' + (opts.defaultValue || '') + '" placeholder="' + (opts.placeholder || '') + '">';
+    }
+    html += '<div class="modal-btns">';
+    if (opts.showCancel !== false) {
+      html += '<button onclick="this.closest(\'.modal-overlay\').remove();(' + (opts._rejectId || 'function(){}') + ')()" >Cancel</button>';
+    }
+    html += '<button class="primary" id="modalOkBtn">OK</button>';
+    html += '</div>';
+    box.innerHTML = html;
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+
+    var okBtn = document.getElementById('modalOkBtn');
+    okBtn.onclick = function() {
+      var val = true;
+      if (opts.input) {
+        val = document.getElementById('modalInput').value;
+      }
+      overlay.remove();
+      resolve(val);
+    };
+
+    // Store reject function globally for cancel button
+    window._modalReject = function() { resolve(opts.input ? null : false); };
+    // Fix cancel buttons
+    var cancelBtns = box.querySelectorAll('button:not(.primary)');
+    cancelBtns.forEach(function(b) {
+      b.onclick = function() { overlay.remove(); resolve(opts.input ? null : false); };
+    });
+
+    // Focus input if present
+    if (opts.input) {
+      setTimeout(function() {
+        var inp = document.getElementById('modalInput');
+        if (inp) { inp.focus(); inp.select(); }
+      }, 50);
+    }
+
+    // Enter key submits
+    overlay.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { okBtn.click(); }
+      if (e.key === 'Escape') { overlay.remove(); resolve(opts.input ? null : false); }
+    });
+  });
+}
+
+function modalAlert(message, title) {
+  return showModal({ title: title || 'Notice', message: message, showCancel: false });
+}
+
+function modalConfirm(message, title) {
+  return showModal({ title: title || 'Confirm', message: message });
+}
+
+function modalPrompt(message, defaultValue, title) {
+  return showModal({ title: title || 'Input', message: message, input: true, defaultValue: defaultValue || '' });
+}
+
 function _initMT5() {
   checkMT5Status();
   if (currentDataMode === 'mt5') loadMT5Symbols();
