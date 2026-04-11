@@ -83,6 +83,75 @@ class Trade:
         }
 
 
+class OptionTrade:
+    """An options contract trade (call or put)."""
+    __slots__ = ('contract_type', 'strike', 'expiry', 'direction', 'entry_bar',
+                 'entry_price', 'exit_bar', 'exit_price', 'qty', 'multiplier',
+                 'pnl', 'pnl_pct', 'comment', 'exit_reason', 'entry_date',
+                 'exit_date', 'bars_held', 'greeks_at_entry', 'spread_id',
+                 'last_known_mark', 'entry_commission')
+
+    def __init__(self, contract_type, strike, expiry, direction, entry_bar,
+                 entry_price, qty=1, multiplier=100, comment='', entry_date=None,
+                 spread_id=None):
+        self.contract_type = contract_type  # 'call' or 'put'
+        self.strike = strike
+        self.expiry = expiry                # pd.Timestamp or None
+        self.direction = direction          # 'long' (bought) or 'short' (sold/written)
+        self.entry_bar = entry_bar
+        self.entry_price = entry_price      # premium per contract at entry
+        self.exit_bar = None; self.exit_price = None
+        self.qty = qty; self.multiplier = multiplier
+        self.pnl = 0.0; self.pnl_pct = 0.0
+        self.comment = comment; self.entry_date = entry_date; self.exit_date = None
+        self.bars_held = 0; self.exit_reason = ''
+        self.greeks_at_entry = {}           # {delta, gamma, theta, vega, iv}
+        self.spread_id = spread_id          # links legs of multi-leg strategies
+        self.last_known_mark = entry_price  # fallback for mark-to-market
+        self.entry_commission = 0.0         # stored for accurate pnl reporting
+
+    def close(self, exit_bar, exit_price, commission_cost=0.0, exit_date=None):
+        self.exit_bar = exit_bar; self.exit_price = exit_price
+        self.exit_date = exit_date; self.bars_held = exit_bar - self.entry_bar
+        if self.direction == 'long':
+            raw = (exit_price - self.entry_price) * self.qty * self.multiplier
+        else:
+            raw = (self.entry_price - exit_price) * self.qty * self.multiplier
+        self.pnl = raw - commission_cost
+        entry_value = self.entry_price * self.qty * self.multiplier
+        self.pnl_pct = (self.pnl / entry_value) * 100 if entry_value != 0 else 0
+
+    def intrinsic_value(self, underlying_price):
+        """Intrinsic value at expiry."""
+        if self.contract_type == 'call':
+            return max(underlying_price - self.strike, 0)
+        else:  # put
+            return max(self.strike - underlying_price, 0)
+
+    def to_dict(self):
+        return {
+            'trade_type': 'option',
+            'contract_type': self.contract_type,
+            'strike': round(self.strike, 2),
+            'expiry': str(self.expiry.date()) if self.expiry is not None and str(self.expiry) != 'NaT' else None,
+            'direction': self.direction,
+            'entry_bar': self.entry_bar,
+            'entry_price': round(self.entry_price, 4),
+            'exit_bar': self.exit_bar,
+            'exit_price': round(self.exit_price, 4) if self.exit_price is not None else None,
+            'qty': self.qty,
+            'multiplier': self.multiplier,
+            'pnl': round(self.pnl, 2),
+            'pnl_pct': round(self.pnl_pct, 2),
+            'comment': self.comment,
+            'entry_date': str(self.entry_date) if self.entry_date else None,
+            'exit_date': str(self.exit_date) if self.exit_date else None,
+            'bars_held': self.bars_held,
+            'exit_reason': self.exit_reason,
+            'spread_id': self.spread_id,
+        }
+
+
 class PendingExit:
     def __init__(self, stop=None, limit=None, from_entry='', comment=''):
         self.stop = stop; self.limit = limit
@@ -144,6 +213,12 @@ class Backtester:
         self.equity_curve = []
         self.balance_curve = []
         self.drawdown_curve = []
+        # Options portfolio (coexists with equity positions)
+        self.open_options: dict = {}     # {tid: OptionTrade}
+        self.closed_options: list = []   # completed option trades
+        self._next_option_tid = 0
+        self._next_spread_id = 0
+        self._options_unrealized = 0.0   # cached per-bar
 
     def _calc_spread(self):
         """Half spread in price units (applied to entry/exit)."""
@@ -234,6 +309,241 @@ class Backtester:
             self.open_position = list(self.open_positions.values())[-1]
         else:
             self.open_position = None
+        return balance
+
+    # ── Options execution methods ──────────────────────────────────────────
+
+    def _find_option_contract(self, chain, strike, contract_type, expiry_dte, bar_date):
+        """Find the best-matching option contract from the chain for the current bar."""
+        import pandas as _pd
+        if chain is None or len(chain) == 0:
+            return None
+        filtered = chain[(chain['type'] == contract_type) & (chain['strike'] == strike)]
+        if len(filtered) == 0:
+            # Nearest strike fallback
+            typed = chain[chain['type'] == contract_type]
+            if len(typed) == 0:
+                return None
+            typed = typed.copy()
+            typed['_sdist'] = (typed['strike'] - strike).abs()
+            filtered = typed.nsmallest(5, '_sdist')
+        filtered = filtered.copy()
+        filtered['_dte'] = (_pd.to_datetime(filtered['expiration']) - _pd.Timestamp(bar_date)).dt.days
+        filtered['_dte_dist'] = (filtered['_dte'] - expiry_dte).abs()
+        best = filtered.nsmallest(1, '_dte_dist')
+        return best.iloc[0] if len(best) > 0 else None
+
+    def _open_option(self, sig, bar_idx, current_date, balance, interpreter):
+        """Open a single-leg option position. Returns updated balance."""
+        import pandas as _pd
+        date_key = interpreter.variables.get('_options_date_key', '')
+        opts_by_date = interpreter.variables.get('__options_by_date__', {})
+        chain = opts_by_date.get(date_key)
+        if chain is None or len(chain) == 0:
+            return balance  # no options data for this date
+
+        contract = self._find_option_contract(
+            chain, sig.strike, sig.contract_type, sig.expiry_dte, date_key)
+        if contract is None:
+            return balance
+
+        # Entry price: buy at ask, sell at bid (realistic fills)
+        def _get_premium(row, *keys):
+            for k in keys:
+                v = row.get(k)
+                if _pd.notna(v) and float(v) > 0:
+                    return float(v)
+            return 0.0
+        if sig.direction == 'long':
+            premium = _get_premium(contract, 'ask', 'mark', 'last')
+        else:
+            premium = _get_premium(contract, 'bid', 'mark', 'last')
+        if premium <= 0:
+            return balance  # can't price this contract
+
+        expiry = _pd.to_datetime(contract.get('expiration')) if _pd.notna(contract.get('expiration')) else None
+        qty = int(sig.qty) if sig.qty else 1
+        multiplier = 100  # standard US equity options
+
+        trade = OptionTrade(
+            contract_type=sig.contract_type,
+            strike=float(contract['strike']),
+            expiry=expiry,
+            direction=sig.direction,
+            entry_bar=bar_idx,
+            entry_price=premium,
+            qty=qty,
+            multiplier=multiplier,
+            comment=sig.comment,
+            entry_date=current_date,
+            spread_id=getattr(sig, 'spread_id', None),
+        )
+        # Snapshot greeks at entry
+        for g in ('delta', 'gamma', 'theta', 'vega', 'implied_volatility'):
+            v = contract.get(g)
+            if _pd.notna(v):
+                trade.greeks_at_entry[g] = float(v)
+
+        # Debit/credit premium from balance
+        cost = premium * qty * multiplier
+        comm = self._calc_option_commission(premium, qty, multiplier)
+        trade.entry_commission = comm
+        if sig.direction == 'long':
+            balance -= cost + comm  # pay premium + commission
+        else:
+            balance += cost - comm  # receive premium - commission
+
+        tid = self._next_option_tid
+        self._next_option_tid += 1
+        self.open_options[tid] = trade
+        return balance
+
+    def _close_option_trade(self, tid, bar_idx, current_date, balance, interpreter, reason='signal'):
+        """Close a single option position by trade ID. Returns updated balance."""
+        import pandas as _pd
+        trade = self.open_options.pop(tid)
+        trade.exit_reason = reason
+
+        # Find current mark for exit price
+        exit_price = self._get_option_mark(trade, interpreter)
+        if exit_price is None:
+            exit_price = trade.last_known_mark  # fallback
+
+        exit_comm = self._calc_option_commission(exit_price, trade.qty, trade.multiplier)
+        total_comm = trade.entry_commission + exit_comm
+        trade.close(bar_idx, exit_price, total_comm, current_date)
+
+        # Credit/debit exit premium
+        exit_value = exit_price * trade.qty * trade.multiplier
+        if trade.direction == 'long':
+            balance += exit_value - exit_comm   # sell to close → receive premium
+        else:
+            balance -= exit_value + exit_comm   # buy to close → pay premium
+
+        self.closed_options.append(trade)
+        return balance
+
+    def _close_option_by_id(self, comment, bar_idx, current_date, balance, interpreter):
+        """Close all option positions matching a comment/label."""
+        to_close = [tid for tid, t in self.open_options.items() if t.comment == comment]
+        for tid in to_close:
+            balance = self._close_option_trade(tid, bar_idx, current_date, balance, interpreter)
+        return balance
+
+    def _close_all_options(self, bar_idx, current_date, balance, interpreter):
+        """Close all open option positions."""
+        for tid in list(self.open_options.keys()):
+            balance = self._close_option_trade(tid, bar_idx, current_date, balance, interpreter)
+        return balance
+
+    def _expire_option(self, tid, bar_idx, current_date, underlying_price, balance):
+        """Handle option expiration — exercise if ITM, expire worthless if OTM."""
+        trade = self.open_options.pop(tid)
+        intrinsic = trade.intrinsic_value(underlying_price)
+
+        if intrinsic > 0:
+            # ITM — exercise
+            trade.exit_reason = 'exercise'
+            exit_premium = intrinsic
+        else:
+            # OTM — expires worthless
+            trade.exit_reason = 'expiry'
+            exit_premium = 0.0
+
+        trade.close(bar_idx, exit_premium, trade.entry_commission, current_date)
+
+        # Settle cash
+        exit_value = exit_premium * trade.qty * trade.multiplier
+        if trade.direction == 'long':
+            balance += exit_value   # receive intrinsic value
+        else:
+            balance -= exit_value   # pay intrinsic value to holder
+
+        self.closed_options.append(trade)
+        return balance
+
+    def _get_option_mark(self, trade, interpreter):
+        """Look up current market price for an open option position."""
+        import pandas as _pd
+        date_key = interpreter.variables.get('_options_date_key', '')
+        opts_by_date = interpreter.variables.get('__options_by_date__', {})
+        chain = opts_by_date.get(date_key)
+        if chain is None or len(chain) == 0:
+            return None
+        # Find matching contract: same strike, type, expiry
+        match = chain[(chain['type'] == trade.contract_type) &
+                      (chain['strike'] == trade.strike)]
+        if trade.expiry is not None:
+            exp_match = match[_pd.to_datetime(match['expiration']) == trade.expiry]
+            if len(exp_match) > 0:
+                match = exp_match
+        if len(match) == 0:
+            return None
+        row = match.iloc[0]
+        mark = row.get('mark')
+        if _pd.notna(mark) and float(mark) > 0:
+            trade.last_known_mark = float(mark)
+            return float(mark)
+        last = row.get('last')
+        if _pd.notna(last) and float(last) > 0:
+            trade.last_known_mark = float(last)
+            return float(last)
+        return None
+
+    def _get_option_greek(self, trade, greek_name, interpreter):
+        """Look up current greek value for an open option position."""
+        import pandas as _pd
+        date_key = interpreter.variables.get('_options_date_key', '')
+        opts_by_date = interpreter.variables.get('__options_by_date__', {})
+        chain = opts_by_date.get(date_key)
+        if chain is None or len(chain) == 0:
+            return 0
+        match = chain[(chain['type'] == trade.contract_type) &
+                      (chain['strike'] == trade.strike)]
+        if trade.expiry is not None:
+            exp_match = match[_pd.to_datetime(match['expiration']) == trade.expiry]
+            if len(exp_match) > 0:
+                match = exp_match
+        if len(match) == 0:
+            return 0
+        val = match.iloc[0].get(greek_name)
+        return float(val) if _pd.notna(val) else 0
+
+    def _calc_option_commission(self, premium, qty, multiplier):
+        """Calculate commission for an options trade."""
+        cost = 0.0
+        if self.commission_per_trade > 0:
+            cost += self.commission_per_trade * qty  # per-contract fee
+        if self.commission_pct > 0:
+            cost += premium * qty * multiplier * self.commission_pct / 100
+        return cost
+
+    def _open_spread(self, sig, bar_idx, current_date, balance, interpreter):
+        """Open a multi-leg spread (vertical, condor, straddle, strangle)."""
+        spread_id = f"spread_{self._next_spread_id}"
+        self._next_spread_id += 1
+        legs = getattr(sig, 'legs', [])
+        for leg in legs:
+            # Create a simple namespace for the leg signal (avoid importing Signal)
+            class _LegSig:
+                pass
+            s = _LegSig()
+            s.action = 'entry_option'
+            s.direction = leg['direction']
+            s.qty = sig.qty
+            s.comment = sig.comment
+            s.strike = leg['strike']
+            s.contract_type = leg['type']
+            s.expiry_dte = getattr(sig, 'expiry_dte', 30)
+            s.spread_id = spread_id
+            balance = self._open_option(s, bar_idx, current_date, balance, interpreter)
+        return balance
+
+    def _close_spread_by_id(self, spread_id, bar_idx, current_date, balance, interpreter):
+        """Close all legs of a spread."""
+        to_close = [tid for tid, t in self.open_options.items() if t.spread_id == spread_id]
+        for tid in to_close:
+            balance = self._close_option_trade(tid, bar_idx, current_date, balance, interpreter)
         return balance
 
     def _run_loop(self, streaming=False, yield_every=500):
@@ -589,13 +899,58 @@ class Backtester:
                             stop=sl_val, limit=tp_val,
                             from_entry=signal.from_entry, comment=signal.comment)
 
-            # Equity — sum unrealized across all positions
+            # ── Process options signals ──
+            for signal in bar_signals:
+                if signal.action == 'entry_option':
+                    balance = self._open_option(signal, i, current_date, balance, interpreter)
+                elif signal.action == 'close_option':
+                    balance = self._close_option_by_id(signal.comment, i, current_date, balance, interpreter)
+                elif signal.action == 'close_all_options':
+                    balance = self._close_all_options(i, current_date, balance, interpreter)
+                elif signal.action in ('entry_spread', 'entry_condor', 'entry_straddle', 'entry_strangle'):
+                    balance = self._open_spread(signal, i, current_date, balance, interpreter)
+
+            # ── Options mark-to-market + expiry check ──
+            import pandas as _opt_pd
+            options_unrealized = 0.0
+            for otid, opt in list(self.open_options.items()):
+                # Check expiration
+                if opt.expiry is not None and current_date:
+                    try:
+                        bar_ts = _opt_pd.Timestamp(current_date)
+                        if bar_ts >= opt.expiry:
+                            balance = self._expire_option(otid, i, current_date, current_price, balance)
+                            continue
+                    except Exception:
+                        pass
+                # Mark to market
+                mark = self._get_option_mark(opt, interpreter)
+                if mark is not None:
+                    if opt.direction == 'long':
+                        options_unrealized += (mark - opt.entry_price) * opt.qty * opt.multiplier
+                    else:
+                        options_unrealized += (opt.entry_price - mark) * opt.qty * opt.multiplier
+            self._options_unrealized = options_unrealized
+
+            # ── Update options portfolio variables ──
+            interpreter.variables['_options_count'] = len(self.open_options)
+            interpreter.variables['_options_profit'] = options_unrealized
+            net_delta = 0.0; net_theta = 0.0
+            for opt in self.open_options.values():
+                sign = 1.0 if opt.direction == 'long' else -1.0
+                net_delta += self._get_option_greek(opt, 'delta', interpreter) * opt.qty * sign * opt.multiplier
+                net_theta += self._get_option_greek(opt, 'theta', interpreter) * opt.qty * sign * opt.multiplier
+            interpreter.variables['_options_delta'] = round(net_delta, 2)
+            interpreter.variables['_options_theta'] = round(net_theta, 2)
+
+            # Equity — sum unrealized across all positions (equity + options)
             equity = balance
             for pos in self.open_positions.values():
                 if pos.direction == 'long':
                     equity += (current_price - pos.entry_price) * pos.qty * self._pnl_conversion
                 else:
                     equity += (pos.entry_price - current_price) * pos.qty * self._pnl_conversion
+            equity += options_unrealized
             self.equity_curve.append(equity)
             self.balance_curve.append(balance)
             peak_equity = max(peak_equity, equity)
@@ -606,14 +961,19 @@ class Backtester:
             if streaming and (i % yield_every == 0 or i == total_bars - 1):
                 yield {'status': 'progress', 'bar': i, 'total': total_bars, 'pct': round(i / total_bars * 100)}
 
-        # Close remaining positions
+        # Close remaining positions (equity + options)
+        last_price = self.data.iloc[-1]['close'] if len(self.data) > 0 else 0
+        last_date = self.data.iloc[-1][date_col] if date_col and len(self.data) > 0 else None
         if self.open_positions:
-            last_price = self.data.iloc[-1]['close']
-            last_date = self.data.iloc[-1][date_col] if date_col else None
             for tid in list(self.open_positions.keys()):
                 balance = self._close_position(tid, total_bars - 1, last_price, last_date, balance, is_na, reason='end')
-            self.equity_curve[-1] = balance
-            self.balance_curve[-1] = balance
+        if self.open_options:
+            for tid in list(self.open_options.keys()):
+                balance = self._close_option_trade(tid, total_bars - 1, last_date, balance, interpreter, reason='end')
+        if self.open_positions or self.open_options:
+            if self.equity_curve:
+                self.equity_curve[-1] = balance
+                self.balance_curve[-1] = balance
 
         if not self.equity_curve:
             self.equity_curve = [self.initial_capital]
@@ -779,6 +1139,10 @@ class Backtester:
         metrics['excluded_trades'] = excluded_count
 
         trade_list = [t.to_dict(self.engine) for t in filtered_trades]
+        # Merge options trades into trade list
+        for ot in self.closed_options:
+            d = ot.to_dict()
+            trade_list.append(d)
 
         equity = self.equity_curve
         drawdown = self.drawdown_curve

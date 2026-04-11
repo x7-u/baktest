@@ -981,7 +981,7 @@ class PineInterpreter:
             'currency.USD': 'USD', 'currency.EUR': 'EUR', 'currency.GBP': 'GBP',
             'currency.JPY': 'JPY', 'currency.AUD': 'AUD', 'currency.NZD': 'NZD',
             'math.pi': math.pi, 'math.e': math.e,
-            'barstate.islast': self.bar_index == len(self.bars) - 1 if self.bars is not None else False,
+            'barstate.islast': self.bar_index == len(self.bars) - 1 if getattr(self, 'bars', None) is not None else False,
             'barstate.isfirst': self.bar_index == 0,
             'barstate.isconfirmed': True,
             'syminfo.tickerid': 'SYMBOL', 'syminfo.ticker': 'SYMBOL',
@@ -1010,6 +1010,10 @@ class PineInterpreter:
             'strategy.closedtrades': self.variables.get('_closedtrades', 0),
             'strategy.initial_capital': self.variables.get('_equity', 10000) - self.variables.get('_netprofit', 0),
             'options.available': self.variables.get('_options_available', False),
+            'strategy.options_count': self.variables.get('_options_count', 0),
+            'strategy.options_profit': self.variables.get('_options_profit', 0),
+            'strategy.options_delta': self.variables.get('_options_delta', 0),
+            'strategy.options_theta': self.variables.get('_options_theta', 0),
         }
         # strategy.opentrades.entry_price(0) is handled as a function call
         if name in constants: return constants[name]
@@ -1142,6 +1146,106 @@ class PineInterpreter:
 
         if name == 'strategy.closedtrades.size':
             return len(self.variables.get('_closedtrades_list', []))
+
+        # ── Options trading functions ──
+        if name == 'strategy.entry_option':
+            # args: id, direction, strike, type, expiry_dte, qty
+            comment = str(args[0]) if len(args) > 0 else ''
+            direction = args[1] if len(args) > 1 else 'long'
+            if direction == 'long' or direction == self.variables.get('strategy.long', 'long'):
+                direction = 'long'
+            else:
+                direction = 'short'
+            strike = float(args[2]) if len(args) > 2 and not is_na(args[2]) else self.variables.get('close', 0)
+            contract_type = str(args[3]) if len(args) > 3 else 'call'
+            expiry_dte = int(args[4]) if len(args) > 4 and not is_na(args[4]) else 30
+            qty = float(args[5]) if len(args) > 5 and not is_na(args[5]) else 1
+            sig = Signal('entry_option', direction, qty=qty, comment=comment)
+            sig.strike = strike
+            sig.contract_type = contract_type
+            sig.expiry_dte = expiry_dte
+            self.signals.append(sig)
+            return None
+
+        if name == 'strategy.close_option':
+            comment = str(args[0]) if args else ''
+            sig = Signal('close_option', 'all', comment=comment)
+            self.signals.append(sig)
+            return None
+
+        if name == 'strategy.close_all_options':
+            sig = Signal('close_all_options', 'all')
+            self.signals.append(sig)
+            return None
+
+        if name == 'strategy.entry_spread':
+            # args: id, spread_type, long_strike, short_strike, type, expiry_dte, qty
+            comment = str(args[0]) if len(args) > 0 else ''
+            spread_type = str(args[1]) if len(args) > 1 else 'vertical'
+            long_strike = float(args[2]) if len(args) > 2 else self.variables.get('close', 0)
+            short_strike = float(args[3]) if len(args) > 3 else long_strike * 1.05
+            contract_type = str(args[4]) if len(args) > 4 else 'call'
+            expiry_dte = int(args[5]) if len(args) > 5 and not is_na(args[5]) else 30
+            qty = float(args[6]) if len(args) > 6 and not is_na(args[6]) else 1
+            sig = Signal('entry_spread', 'long', qty=qty, comment=comment)
+            sig.expiry_dte = expiry_dte
+            sig.legs = [
+                {'strike': long_strike, 'type': contract_type, 'direction': 'long'},
+                {'strike': short_strike, 'type': contract_type, 'direction': 'short'},
+            ]
+            self.signals.append(sig)
+            return None
+
+        if name == 'strategy.entry_condor':
+            # args: id, put_sell, put_buy, call_sell, call_buy, expiry_dte, qty
+            comment = str(args[0]) if len(args) > 0 else ''
+            put_sell = float(args[1]) if len(args) > 1 else self.variables.get('close', 0) * 0.95
+            put_buy = float(args[2]) if len(args) > 2 else put_sell * 0.95
+            call_sell = float(args[3]) if len(args) > 3 else self.variables.get('close', 0) * 1.05
+            call_buy = float(args[4]) if len(args) > 4 else call_sell * 1.05
+            expiry_dte = int(args[5]) if len(args) > 5 and not is_na(args[5]) else 30
+            qty = float(args[6]) if len(args) > 6 and not is_na(args[6]) else 1
+            sig = Signal('entry_condor', 'long', qty=qty, comment=comment)
+            sig.expiry_dte = expiry_dte
+            sig.legs = [
+                {'strike': put_sell, 'type': 'put', 'direction': 'short'},
+                {'strike': put_buy, 'type': 'put', 'direction': 'long'},
+                {'strike': call_sell, 'type': 'call', 'direction': 'short'},
+                {'strike': call_buy, 'type': 'call', 'direction': 'long'},
+            ]
+            self.signals.append(sig)
+            return None
+
+        if name == 'strategy.entry_straddle':
+            # args: id, strike, expiry_dte, qty
+            comment = str(args[0]) if len(args) > 0 else ''
+            strike = float(args[1]) if len(args) > 1 else self.variables.get('close', 0)
+            expiry_dte = int(args[2]) if len(args) > 2 and not is_na(args[2]) else 30
+            qty = float(args[3]) if len(args) > 3 and not is_na(args[3]) else 1
+            sig = Signal('entry_straddle', 'long', qty=qty, comment=comment)
+            sig.expiry_dte = expiry_dte
+            sig.legs = [
+                {'strike': strike, 'type': 'call', 'direction': 'long'},
+                {'strike': strike, 'type': 'put', 'direction': 'long'},
+            ]
+            self.signals.append(sig)
+            return None
+
+        if name == 'strategy.entry_strangle':
+            # args: id, put_strike, call_strike, expiry_dte, qty
+            comment = str(args[0]) if len(args) > 0 else ''
+            put_strike = float(args[1]) if len(args) > 1 else self.variables.get('close', 0) * 0.95
+            call_strike = float(args[2]) if len(args) > 2 else self.variables.get('close', 0) * 1.05
+            expiry_dte = int(args[3]) if len(args) > 3 and not is_na(args[3]) else 30
+            qty = float(args[4]) if len(args) > 4 and not is_na(args[4]) else 1
+            sig = Signal('entry_strangle', 'long', qty=qty, comment=comment)
+            sig.expiry_dte = expiry_dte
+            sig.legs = [
+                {'strike': put_strike, 'type': 'put', 'direction': 'long'},
+                {'strike': call_strike, 'type': 'call', 'direction': 'long'},
+            ]
+            self.signals.append(sig)
+            return None
 
         # Input functions
         if name.startswith('input'):

@@ -684,6 +684,10 @@ cdef class FastPineInterpreter:
         if name == 'strategy.closedtrades': return self.variables.get('_closedtrades', 0)
         if name == 'strategy.initial_capital': return self.variables.get('_equity', 10000) - self.variables.get('_netprofit', 0)
         if name == 'options.available': return self.variables.get('_options_available', False)
+        if name == 'strategy.options_count': return self.variables.get('_options_count', 0)
+        if name == 'strategy.options_profit': return self.variables.get('_options_profit', 0)
+        if name == 'strategy.options_delta': return self.variables.get('_options_delta', 0)
+        if name == 'strategy.options_theta': return self.variables.get('_options_theta', 0)
         if name == 'math.pi': return M_PI
         if name == 'math.e': return 2.718281828459045
         if name == 'barstate.islast':
@@ -774,7 +778,10 @@ cdef class FastPineInterpreter:
                      'options.vega', 'options.rho', 'options.mark', 'options.bid',
                      'options.ask', 'options.last', 'options.volume', 'options.oi',
                      'options.atm_iv', 'options.put_call_ratio', 'options.total_oi',
-                     'options.total_volume', 'options.iv_skew') or name.startswith('options.'):
+                     'options.total_volume', 'options.iv_skew',
+                     'strategy.entry_option', 'strategy.close_option', 'strategy.close_all_options',
+                     'strategy.entry_spread', 'strategy.entry_condor',
+                     'strategy.entry_straddle', 'strategy.entry_strangle') or name.startswith('options.'):
             from pine_parser import PineInterpreter as _PI
             # Create a temporary Python interpreter method call
             pi = _PI.__new__(_PI)
@@ -785,6 +792,8 @@ cdef class FastPineInterpreter:
             pi._max_exec_count = 0
             pi._max_exec_limit = 500000
             pi._timestamps = self.variables.get('__timestamps__', [])
+            pi.signals = self.signals  # share signal list for strategy.entry_option etc.
+            pi.inputs = getattr(self, 'inputs', {})
             return pi._call(node)
 
         # Math
