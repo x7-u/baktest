@@ -12,6 +12,13 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from flask import Flask, request, jsonify, send_from_directory, Response
 from backtester import Backtester
 
+# Optional: options data source (requires pyarrow)
+try:
+    from options_source import OptionsDataSource
+    _options_available = True
+except ImportError:
+    _options_available = False
+
 
 def sanitize_for_json(obj):
     """Recursively replace NA, NaN, Inf, numpy types with JSON-safe values."""
@@ -461,6 +468,169 @@ def mt5_fetch_and_backtest():
         return jsonify({'error': f'Backtest error: {str(e)}'}), 500
 
 
+# ─── Options Data Routes ─────────────────────────────────────────────────────
+
+@app.route('/api/options/tickers')
+def options_tickers():
+    """Return list of available tickers for options data."""
+    if not _options_available:
+        return jsonify({'error': 'Options data source not available (pyarrow not installed)', 'tickers': []}), 503
+    src = OptionsDataSource()
+    return jsonify({'tickers': src.get_tickers()})
+
+
+@app.route('/api/options/date-range')
+def options_date_range():
+    """Get available date range for a ticker. Downloads underlying.parquet if needed."""
+    if not _options_available:
+        return jsonify({'error': 'Options data source not available'}), 503
+    ticker = request.args.get('ticker', '').upper().strip()
+    if not ticker:
+        return jsonify({'error': 'No ticker specified'}), 400
+    src = OptionsDataSource()
+    if ticker not in src.get_tickers():
+        return jsonify({'error': f'Unknown ticker: {ticker}'}), 400
+    try:
+        src.ensure_underlying(ticker)
+        # For ETFs with empty underlying, also download options for date range
+        if not src._has_underlying_data(ticker):
+            src.ensure_options(ticker)
+        earliest, latest = src.get_date_range(ticker)
+        return jsonify({'earliest': earliest, 'latest': latest})
+    except Exception as e:
+        return jsonify({'error': f'Failed to get date range: {str(e)}'}), 500
+
+
+@app.route('/api/options/fetch', methods=['POST'])
+def run_options_backtest():
+    """Run backtest using options data from CDN."""
+    if not _options_available:
+        return jsonify({'error': 'Options data source not available. Run: pip install pyarrow'}), 503
+    try:
+        ticker = request.form.get('ticker', '').upper().strip()
+        script = request.form.get('script', '')
+        engine = request.form.get('engine', 'pine')
+        date_from = request.form.get('date_from', '')
+        date_to = request.form.get('date_to', '')
+
+        # Standard settings (same as CSV/MT5 modes)
+        initial_capital = float(request.form.get('initial_capital', 10000))
+        commission = float(request.form.get('commission', 0.0))
+        commission_per_lot = float(request.form.get('commission_per_lot', 0.0))
+        commission_per_trade = float(request.form.get('commission_per_trade', 0.0))
+        default_qty = float(request.form.get('default_qty', 1.0))
+        risk_pct = float(request.form.get('risk_pct', 0.0))
+        spread_pips = float(request.form.get('spread_pips', 0.0))
+        slippage_pips = float(request.form.get('slippage_pips', 0.0))
+        max_bars = int(request.form.get('max_bars', 0))
+        base_tf = request.form.get('base_tf', 'D1')
+        utc_offset = int(request.form.get('utc_offset', 0))
+
+        # Date filters
+        date_filters = []
+        df_raw = request.form.get('date_filters', '[]')
+        try:
+            date_filters = json.loads(df_raw) if df_raw else []
+        except Exception:
+            pass
+
+        # Funded account rules
+        funded_rules = None
+        if request.form.get('funded_enabled') == '1':
+            funded_rules = {
+                'enabled': True,
+                'target': float(request.form.get('funded_target', 10)),
+                'max_dd': float(request.form.get('funded_max_dd', 10)),
+                'daily_dd': float(request.form.get('funded_daily_dd', 5)),
+                'min_days': int(request.form.get('funded_min_days', 5)),
+                'p2_target': float(request.form.get('funded_p2_target', 0)),
+            }
+
+        if not ticker:
+            return jsonify({'error': 'No ticker specified'}), 400
+        if not script.strip():
+            return jsonify({'error': 'No strategy script provided'}), 400
+
+        src = OptionsDataSource()
+        if ticker not in src.get_tickers():
+            return jsonify({'error': f'Unknown ticker: {ticker}'}), 400
+
+        # Download underlying data (small, ~5MB)
+        src.ensure_underlying(ticker)
+        # Some ETFs (SPY, QQQ, IWM, VIX) have empty underlying.parquet
+        # Fall back to deriving prices from the options chain
+        if src._has_underlying_data(ticker):
+            df = src.load_underlying(ticker, start_date=date_from or None, end_date=date_to or None)
+        else:
+            # Need options data to derive underlying — download it now
+            src.ensure_options(ticker)
+            df = src.load_underlying_from_options(ticker, start_date=date_from or None, end_date=date_to or None)
+
+        if len(df) < 2:
+            return jsonify({'error': f'Insufficient data for {ticker} in the selected date range ({len(df)} bars).'}), 400
+
+        # Download options chain (can be large — 50-600MB, cached after first fetch)
+        options_chain = None
+        try:
+            src.ensure_options(ticker)
+            options_chain = src.load_options_chain(ticker, start_date=date_from or None, end_date=date_to or None)
+        except Exception as opt_err:
+            # Options chain is optional for Phase 1 — don't block the backtest
+            print(f'Warning: Could not load options chain for {ticker}: {opt_err}')
+
+        # Trim to max_bars if requested
+        if max_bars > 0 and len(df) > max_bars:
+            df = df.tail(max_bars).reset_index(drop=True)
+            # Also trim options_chain to matching date range to avoid GB of unused data
+            if options_chain is not None and len(df) > 0:
+                try:
+                    min_date = pd.Timestamp(df['datetime'].iloc[0].replace('.', '-'))
+                    oc_dates = pd.to_datetime(options_chain['date'])
+                    options_chain = options_chain[oc_dates >= min_date].reset_index(drop=True)
+                except Exception:
+                    pass  # keep full chain if date parsing fails
+
+        # Save script for debugging
+        with open(os.path.join(UPLOAD_FOLDER, 'last_script.pine'), 'w', encoding='utf-8') as f:
+            f.write(script)
+
+        bt = Backtester(
+            data=df,
+            source=script,
+            engine=engine,
+            initial_capital=initial_capital,
+            commission_pct=commission,
+            commission_per_lot=commission_per_lot,
+            commission_per_trade=commission_per_trade,
+            default_qty=default_qty,
+            risk_pct=risk_pct,
+            spread_pips=spread_pips,
+            slippage_pips=slippage_pips,
+            base_tf=base_tf,
+            utc_offset=utc_offset,
+            date_filters=date_filters,
+            symbol_name=ticker,
+            funded_rules=funded_rules,
+            options_chain=options_chain,
+        )
+
+        results = bt.run()
+        interp_name = type(getattr(bt, 'interpreter', None) or object).__name__
+        results['engine'] = 'cython' if 'Fast' in interp_name else 'python'
+        results['engine_type'] = engine
+        results['data_source'] = f'Options: {ticker} (D1)'
+
+        return jsonify(sanitize_for_json(results))
+
+    except SyntaxError as e:
+        return jsonify({'error': f'Syntax error: {str(e)}'}), 400
+    except ValueError as e:
+        return jsonify({'error': f'Data error: {str(e)}'}), 400
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': f'Options backtest error: {str(e)}'}), 500
+
+
 @app.route('/api/backtest-stream', methods=['POST'])
 def run_backtest_stream():
     try:
@@ -532,6 +702,7 @@ def run_optimize():
         commission_per_lot = float(request.form.get('commission_per_lot', 0.0))
         commission_per_trade = float(request.form.get('commission_per_trade', 0.0))
         default_qty = float(request.form.get('default_qty', 1.0))
+        risk_pct = float(request.form.get('risk_pct', 0.0))
         spread_pips = float(request.form.get('spread_pips', 0.0))
         slippage_pips = float(request.form.get('slippage_pips', 0.0))
 

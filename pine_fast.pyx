@@ -683,6 +683,7 @@ cdef class FastPineInterpreter:
         if name == 'strategy.losstrades': return self.variables.get('_losstrades', 0)
         if name == 'strategy.closedtrades': return self.variables.get('_closedtrades', 0)
         if name == 'strategy.initial_capital': return self.variables.get('_equity', 10000) - self.variables.get('_netprofit', 0)
+        if name == 'options.available': return self.variables.get('_options_available', False)
         if name == 'math.pi': return M_PI
         if name == 'math.e': return 2.718281828459045
         if name == 'barstate.islast':
@@ -768,7 +769,12 @@ cdef class FastPineInterpreter:
                      'ta.vwma', 'vwma', 'ta.percentrank', 'ta.swma',
                      'ta.vwap', 'vwap', 'hour', 'minute',
                      'strategy.closedtrades.profit', 'strategy.closedtrades.entry_price',
-                     'strategy.closedtrades.exit_price', 'strategy.closedtrades.size'):
+                     'strategy.closedtrades.exit_price', 'strategy.closedtrades.size',
+                     'options.iv', 'options.delta', 'options.gamma', 'options.theta',
+                     'options.vega', 'options.rho', 'options.mark', 'options.bid',
+                     'options.ask', 'options.last', 'options.volume', 'options.oi',
+                     'options.atm_iv', 'options.put_call_ratio', 'options.total_oi',
+                     'options.total_volume', 'options.iv_skew') or name.startswith('options.'):
             from pine_parser import PineInterpreter as _PI
             # Create a temporary Python interpreter method call
             pi = _PI.__new__(_PI)

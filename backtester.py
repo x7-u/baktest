@@ -113,9 +113,11 @@ class Backtester:
                  utc_offset: int = 0,
                  date_filters: list = None,
                  symbol_name: str = '',
-                 funded_rules: dict = None):
+                 funded_rules: dict = None,
+                 options_chain=None):
         self.data = data
         self.smt_data = smt_data
+        self.options_chain = options_chain
         self.extra_data = extra_data or []
         self.base_tf = base_tf
         self.utc_offset = utc_offset
@@ -273,6 +275,23 @@ class Backtester:
                 _ts = 1700000000 + _i * 300
             _timestamps.append(_ts)
         interpreter.variables['__timestamps__'] = _timestamps
+
+        # Inject options chain for options-aware strategies (Phase 2 scripting access)
+        if self.options_chain is not None and len(self.options_chain) > 0:
+            interpreter.variables['__options_chain__'] = self.options_chain
+            interpreter.variables['_options_available'] = True
+            # Pre-index by date string for O(1) per-bar lookups
+            try:
+                _date_keys = pd.to_datetime(self.options_chain['date']).dt.strftime('%Y-%m-%d')
+                interpreter.variables['__options_by_date__'] = {
+                    k: g for k, g in self.options_chain.groupby(_date_keys)
+                }
+            except Exception:
+                interpreter.variables['__options_by_date__'] = {}
+        else:
+            interpreter.variables['__options_chain__'] = None
+            interpreter.variables['_options_available'] = False
+            interpreter.variables['__options_by_date__'] = {}
 
         # Detect base/profit currencies from symbol name (e.g. NZDCHF → NZD, CHF)
         sym = self.symbol_name
@@ -434,6 +453,18 @@ class Backtester:
                 smt_row = self.smt_data.iloc[i]
                 self._smt_engine.update(i, bar_high, bar_low, smt_row['high'], smt_row['low'])
                 interpreter.variables.update(self._smt_engine.get_variables(i))
+
+            # ── Options: set current bar's date key for options.* lookups ──
+            if self.options_chain is not None and i < len(_timestamps):
+                _opt_ts = _timestamps[i]
+                if _opt_ts and _opt_ts > 946684800:  # after 2000-01-01 — skip invalid/fallback timestamps
+                    try:
+                        import datetime as _dt
+                        interpreter.variables['_options_date_key'] = _dt.datetime.utcfromtimestamp(_opt_ts).strftime('%Y-%m-%d')
+                    except Exception:
+                        interpreter.variables['_options_date_key'] = ''
+                else:
+                    interpreter.variables['_options_date_key'] = ''
 
             # ── Run interpreter ──
             interpreter.run_bar(i)
@@ -613,6 +644,96 @@ class Backtester:
 
     def run_streaming(self, yield_every=500):
         yield from self._run_loop(streaming=True, yield_every=yield_every)
+
+    def _compute_options_viz(self, ohlc_dates):
+        """Compute per-bar options viz data: IV overlay, PCR, OI, term structure, skew."""
+        if self.options_chain is None or len(self.options_chain) == 0:
+            return None
+        import pandas as _pd
+        try:
+            _date_keys = _pd.to_datetime(self.options_chain['date']).dt.strftime('%Y-%m-%d')
+            options_by_date = {k: g for k, g in self.options_chain.groupby(_date_keys)}
+        except Exception:
+            return None
+
+        iv_data, pcr_data, call_oi_data, put_oi_data = [], [], [], []
+        iv_front, iv_back, skew_data = [], [], []
+
+        def _find_atm_iv(calls_df, bar_date, dte_target):
+            """Find ATM IV for a given DTE target from a set of calls."""
+            if len(calls_df) == 0:
+                return None
+            c = calls_df.copy()
+            c['_dte'] = (_pd.to_datetime(c['expiration']) - bar_date).dt.days
+            c['_dte_dist'] = (c['_dte'] - dte_target).abs()
+            nearest = c['_dte_dist'].min()
+            at_e = c[c['_dte_dist'] == nearest]
+            valid = at_e[at_e['delta'].notna()] if 'delta' in at_e.columns else at_e
+            if len(valid) == 0:
+                return None
+            valid = valid.copy()
+            valid['_atm'] = (valid['delta'].fillna(0) - 0.5).abs()
+            best = valid.nsmallest(1, '_atm')
+            if len(best) == 0:
+                return None
+            v = best.iloc[0].get('implied_volatility')
+            return round(float(v), 4) if _pd.notna(v) else None
+
+        for date_str in ohlc_dates:
+            lookup = date_str.replace('.', '-').split(' ')[0] if isinstance(date_str, str) else ''
+            chain = options_by_date.get(lookup)
+            if chain is None or len(chain) == 0:
+                for lst in [iv_data, pcr_data, call_oi_data, put_oi_data, iv_front, iv_back, skew_data]:
+                    lst.append(None)
+                continue
+
+            calls = chain[chain['type'] == 'call']
+            puts = chain[chain['type'] == 'put']
+            bar_date = _pd.Timestamp(lookup)
+
+            # ATM IV (30-day)
+            iv_data.append(_find_atm_iv(calls, bar_date, 30))
+
+            # Put/Call Ratio
+            c_oi = float(calls['open_interest'].sum()) if len(calls) > 0 else 0
+            p_oi = float(puts['open_interest'].sum()) if len(puts) > 0 else 0
+            pcr_data.append(round(p_oi / c_oi, 4) if c_oi > 0 else None)
+            call_oi_data.append(c_oi)
+            put_oi_data.append(p_oi)
+
+            # IV Term Structure: 7d vs 60d
+            iv_front.append(_find_atm_iv(calls, bar_date, 7))
+            iv_back.append(_find_atm_iv(calls, bar_date, 60))
+
+            # IV Skew: 25-delta put IV - 25-delta call IV
+            skew_val = None
+            if len(puts) > 0 and len(calls) > 0:
+                all_opts = chain.copy()
+                all_opts['_dte'] = (_pd.to_datetime(all_opts['expiration']) - bar_date).dt.days
+                all_opts['_dte_dist'] = (all_opts['_dte'] - 30).abs()
+                min_d = all_opts['_dte_dist'].min()
+                at_e = all_opts[all_opts['_dte_dist'] == min_d]
+                ep = at_e[at_e['type'] == 'put']
+                ec = at_e[at_e['type'] == 'call']
+                if len(ep) > 0 and len(ec) > 0:
+                    ep = ep.copy(); ec = ec.copy()
+                    ep['_d25'] = (ep['delta'].fillna(0).abs() - 0.25).abs()
+                    ec['_d25'] = (ec['delta'].fillna(0) - 0.25).abs()
+                    p25 = ep.nsmallest(1, '_d25')
+                    c25 = ec.nsmallest(1, '_d25')
+                    if len(p25) > 0 and len(c25) > 0:
+                        piv = p25.iloc[0].get('implied_volatility')
+                        civ = c25.iloc[0].get('implied_volatility')
+                        if _pd.notna(piv) and _pd.notna(civ):
+                            skew_val = round(float(piv) - float(civ), 4)
+            skew_data.append(skew_val)
+
+        return {
+            'iv_overlay': iv_data, 'pcr': pcr_data,
+            'call_oi': call_oi_data, 'put_oi': put_oi_data,
+            'iv_front': iv_front, 'iv_back': iv_back,
+            'iv_skew': skew_data,
+        }
 
     def get_results(self, interpreter=None):
         _, is_na, _ = _get_create_interpreter(self.engine)
@@ -922,6 +1043,8 @@ class Backtester:
             'underwater': underwater,
             'heatmap': heatmap,
             'funded': funded,
+            'options_viz': self._compute_options_viz(ohlc_dates) if self.options_chain is not None else None,
+            'options_viz_dates': ohlc_dates if self.options_chain is not None else None,
         }
 
 

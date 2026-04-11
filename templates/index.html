@@ -531,6 +531,7 @@ textarea.pine-editor:focus { border-color: var(--blue); }
       <div class="bar-chips" style="margin-bottom:8px;">
         <button class="bar-chip active" id="btnDataCSV" onclick="setDataMode('csv')">Upload CSV</button>
         <button class="bar-chip" id="btnDataMT5" onclick="setDataMode('mt5')">Fetch from MT5</button>
+        <button class="bar-chip" id="btnDataOptions" onclick="setDataMode('options')">US Options</button>
       </div>
       <div id="dataCSVPanel">
         <div class="file-drop" id="fileDrop">
@@ -561,6 +562,32 @@ textarea.pine-editor:focus { border-color: var(--blue); }
           <div class="field">
             <label>SMT Symbol (optional)</label>
             <input type="text" id="mt5SMTSymbol" placeholder="e.g. USDJPY" list="mt5SymbolList" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:0;color:var(--text);padding:8px 12px;font-size:13px;">
+          </div>
+        </div>
+      </div>
+      <div id="dataOptionsPanel" style="display:none;">
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <div class="field" style="position:relative;">
+            <label>Ticker</label>
+            <input type="text" id="optionsTicker" placeholder="Search ticker (e.g. SPY, AAPL, TSLA)" autocomplete="off" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:0;color:var(--text);padding:8px 12px;font-size:13px;font-family:'Courier New',monospace;">
+            <div id="optionsTickerDropdown" style="position:absolute;top:100%;left:0;right:0;z-index:100;background:#0d0d0d;border:1px solid #333;max-height:200px;overflow-y:auto;display:none;"></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <div class="field">
+              <label>From Date</label>
+              <input type="text" id="optionsDateFrom" placeholder="YYYY-MM-DD" maxlength="10" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:0;color:var(--text);padding:8px 12px;font-size:13px;font-family:monospace;">
+            </div>
+            <div class="field">
+              <label>To Date</label>
+              <input type="text" id="optionsDateTo" placeholder="YYYY-MM-DD" maxlength="10" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:0;color:var(--text);padding:8px 12px;font-size:13px;font-family:monospace;">
+            </div>
+          </div>
+          <div id="optionsStatus" style="display:none;font-size:11px;color:var(--text-dim);align-items:center;gap:6px;">
+            <span id="optionsStatusDot" style="color:var(--text-dim);">&#9679;</span>
+            <span id="optionsStatusText"></span>
+          </div>
+          <div id="optionsInfo" style="font-size:10px;color:var(--text-dim);padding:4px 0;">
+            104 US equities &amp; ETFs &middot; Daily data (2008&ndash;2025) &middot; Includes full options chain
           </div>
         </div>
       </div>
@@ -881,6 +908,10 @@ let equityChartJS = null;
 let drawdownChartJS = null;
 let distChartJS = null;
 let recoveryChartJS = null;
+let pcrChartJS = null;
+let oiChartJS = null;
+let ivTermChartJS = null;
+let ivSkewChartJS = null;
 
 var _savedRuns = JSON.parse(localStorage.getItem('_bt_savedRuns') || '[]');
 var _compareMode = false;
@@ -935,9 +966,13 @@ function destroyCharts() {
   if (drawdownChartJS) { drawdownChartJS.destroy(); drawdownChartJS = null; }
   if (distChartJS) { distChartJS.destroy(); distChartJS = null; }
   if (recoveryChartJS) { recoveryChartJS.destroy(); recoveryChartJS = null; }
+  if (pcrChartJS) { pcrChartJS.destroy(); pcrChartJS = null; }
+  if (oiChartJS) { oiChartJS.destroy(); oiChartJS = null; }
+  if (ivTermChartJS) { ivTermChartJS.destroy(); ivTermChartJS = null; }
+  if (ivSkewChartJS) { ivSkewChartJS.destroy(); ivSkewChartJS = null; }
 }
 
-function createPriceChart(ohlc, markers, smtOhlc) {
+function createPriceChart(ohlc, markers, smtOhlc, optionsViz) {
   const container = document.getElementById('priceChart');
   container.innerHTML = '';
   priceChart = LightweightCharts.createChart(container, {
@@ -1054,6 +1089,24 @@ function createPriceChart(ohlc, markers, smtOhlc) {
       return time ? { time, value: d.close } : null;
     }).filter(Boolean);
     smtSeries.setData(smtData);
+  }
+
+  // IV overlay (options data — cyan line in bottom 25% of chart)
+  if (optionsViz && optionsViz.iv_overlay) {
+    var ivSeries = priceChart.addLineSeries({
+      color: '#06b6d4',
+      lineWidth: 1.5,
+      priceScaleId: 'iv',
+      title: 'ATM IV',
+    });
+    priceChart.priceScale('iv').applyOptions({
+      scaleMargins: { top: 0.7, bottom: 0.05 },
+      autoScale: true,
+    });
+    var ivLine = optionsViz.iv_overlay
+      .map(function(v, i) { return (v !== null && i < candleData.length) ? { time: candleData[i].time, value: v } : null; })
+      .filter(Boolean);
+    if (ivLine.length > 0) ivSeries.setData(ivLine);
   }
 
   priceChart.timeScale().fitContent();
@@ -1321,6 +1374,95 @@ function renderDiff() {
   }
 }
 
+function createOptionsCharts(viz, dates) {
+  if (!viz) return;
+  var labels = dates.map(function(d) { return typeof d === 'number' ? 'Bar ' + d : d; });
+  var commonOpts = {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { display: false },
+      y: { grid: { color: '#1e2d45' }, ticks: { color: '#64748b' } }
+    },
+    interaction: { intersect: false, mode: 'index' },
+  };
+
+  // Put/Call Ratio
+  var el = document.getElementById('pcrCanvas');
+  if (viz.pcr && el) {
+    if (pcrChartJS) pcrChartJS.destroy();
+    pcrChartJS = new Chart(el.getContext('2d'), {
+      type: 'line',
+      data: { labels: labels, datasets: [{
+        label: 'P/C Ratio', data: viz.pcr,
+        borderColor: '#3b82f6', borderWidth: 1.5, pointRadius: 0, tension: 0.2, spanGaps: true,
+      }]},
+      options: Object.assign({}, commonOpts, {
+        scales: { x: { display: false }, y: { grid: { color: '#1e2d45' },
+          ticks: { color: '#64748b', callback: function(v) { return v.toFixed(1); } } } }
+      })
+    });
+  }
+
+  // Total Open Interest
+  el = document.getElementById('oiCanvas');
+  if (viz.call_oi && viz.put_oi && el) {
+    if (oiChartJS) oiChartJS.destroy();
+    oiChartJS = new Chart(el.getContext('2d'), {
+      type: 'line',
+      data: { labels: labels, datasets: [
+        { label: 'Call OI', data: viz.call_oi, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.15)',
+          borderWidth: 1, pointRadius: 0, fill: true, tension: 0.2, spanGaps: true },
+        { label: 'Put OI', data: viz.put_oi, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.15)',
+          borderWidth: 1, pointRadius: 0, fill: true, tension: 0.2, spanGaps: true },
+      ]},
+      options: Object.assign({}, commonOpts, {
+        plugins: { legend: { display: true, labels: { color: '#64748b', font: { size: 10 } } } },
+        scales: { x: { display: false }, y: { grid: { color: '#1e2d45' }, stacked: false,
+          ticks: { color: '#64748b', callback: function(v) { return (v/1000).toFixed(0) + 'K'; } } } }
+      })
+    });
+  }
+
+  // IV Term Structure (7d vs 60d)
+  el = document.getElementById('ivTermCanvas');
+  if (viz.iv_front && viz.iv_back && el) {
+    if (ivTermChartJS) ivTermChartJS.destroy();
+    ivTermChartJS = new Chart(el.getContext('2d'), {
+      type: 'line',
+      data: { labels: labels, datasets: [
+        { label: '7d IV', data: viz.iv_front, borderColor: '#f59e0b', borderWidth: 1.5,
+          pointRadius: 0, tension: 0.2, spanGaps: true },
+        { label: '60d IV', data: viz.iv_back, borderColor: '#8b5cf6', borderWidth: 1.5,
+          pointRadius: 0, tension: 0.2, spanGaps: true },
+      ]},
+      options: Object.assign({}, commonOpts, {
+        plugins: { legend: { display: true, labels: { color: '#64748b', font: { size: 10 } } } },
+        scales: { x: { display: false }, y: { grid: { color: '#1e2d45' },
+          ticks: { color: '#64748b', callback: function(v) { return (v*100).toFixed(0) + '%'; } } } }
+      })
+    });
+  }
+
+  // IV Skew
+  el = document.getElementById('ivSkewCanvas');
+  if (viz.iv_skew && el) {
+    if (ivSkewChartJS) ivSkewChartJS.destroy();
+    ivSkewChartJS = new Chart(el.getContext('2d'), {
+      type: 'line',
+      data: { labels: labels, datasets: [{
+        label: 'IV Skew', data: viz.iv_skew,
+        borderColor: '#ec4899', backgroundColor: 'rgba(236,72,153,0.1)',
+        borderWidth: 1.5, pointRadius: 0, fill: true, tension: 0.2, spanGaps: true,
+      }]},
+      options: Object.assign({}, commonOpts, {
+        scales: { x: { display: false }, y: { grid: { color: '#1e2d45' },
+          ticks: { color: '#64748b', callback: function(v) { return (v*100).toFixed(1) + '%'; } } } }
+      })
+    });
+  }
+}
+
 function renderResults(data) {
   window.lastResults = data;
   const m = data.metrics;
@@ -1422,6 +1564,7 @@ function renderResults(data) {
       <button class="tab" data-tab="trades" onclick="switchTab('trades')">Trade Log</button>
       <button class="tab" data-tab="heatmap" onclick="switchTab('heatmap')">Heatmap</button>
       <button class="tab" data-tab="diff" onclick="switchTab('diff')">Script Diff</button>
+      ${data.options_viz ? '<button class="tab" data-tab="options-viz" onclick="switchTab(\'options-viz\')">Options</button>' : ''}
     </div>
 
     <!-- Charts Tab -->
@@ -1629,17 +1772,41 @@ function renderResults(data) {
       </div>
       <div id="diffMetrics"></div>
     </div>
+
+    ${data.options_viz ? `
+    <div class="tab-content" id="tab-options-viz">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div>
+          <div class="chart-section"><div class="chart-header">Put/Call Ratio</div>
+          <div class="chart-body" style="height:220px;"><canvas id="pcrCanvas"></canvas></div></div>
+        </div>
+        <div>
+          <div class="chart-section"><div class="chart-header">Total Open Interest</div>
+          <div class="chart-body" style="height:220px;"><canvas id="oiCanvas"></canvas></div></div>
+        </div>
+        <div>
+          <div class="chart-section"><div class="chart-header">IV Term Structure (7d vs 60d)</div>
+          <div class="chart-body" style="height:220px;"><canvas id="ivTermCanvas"></canvas></div></div>
+        </div>
+        <div>
+          <div class="chart-section"><div class="chart-header">IV Skew (25&#916; Put &#8722; Call)</div>
+          <div class="chart-body" style="height:220px;"><canvas id="ivSkewCanvas"></canvas></div></div>
+        </div>
+      </div>
+    </div>
+    ` : ''}
   `;
 
   // Render charts after DOM update
   setTimeout(() => {
-    createPriceChart(data.ohlc, data.markers, data.smt_ohlc);
+    createPriceChart(data.ohlc, data.markers, data.smt_ohlc, data.options_viz);
     createEquityChart(data.equity_curve);
     createDrawdownChart(data.drawdown_curve);
     createDistributionChart(m.pnl_distribution);
     if (data.r_multiples && data.r_multiples.length > 0) createRMultChart(data.r_multiples);
     createHeatmap(data.heatmap || []);
     createRecoveryChart(data.underwater || []);
+    if (data.options_viz) createOptionsCharts(data.options_viz, data.options_viz_dates || data.equity_curve.dates);
     renderDiff();
     // Save current script + metrics for next diff
     var currentScript = document.getElementById('scriptEditor').value;
@@ -1837,8 +2004,16 @@ async function runBacktest() {
   const btn = document.getElementById('btnRun');
   const script = document.getElementById('scriptEditor').value;
   const isMT5Mode = currentDataMode === 'mt5';
+  const isOptionsMode = currentDataMode === 'options';
 
-  if (!isMT5Mode) {
+  if (isOptionsMode) {
+    const ticker = document.getElementById('optionsTicker').value.trim();
+    if (!ticker) { modalAlert('Please select a ticker (e.g. SPY, AAPL).', 'Missing Ticker'); return; }
+    var odf = document.getElementById('optionsDateFrom').value;
+    var odt = document.getElementById('optionsDateTo').value;
+    if (odf && !/^\d{4}-\d{2}-\d{2}$/.test(odf)) { modalAlert('Invalid start date. Use YYYY-MM-DD format.', 'Invalid Date'); return; }
+    if (odt && !/^\d{4}-\d{2}-\d{2}$/.test(odt)) { modalAlert('Invalid end date. Use YYYY-MM-DD format.', 'Invalid Date'); return; }
+  } else if (!isMT5Mode) {
     const file = document.getElementById('csvFile').files[0];
     if (!file) { modalAlert('Please upload a CSV file first.', 'Missing Data'); return; }
   } else {
@@ -1882,7 +2057,12 @@ async function runBacktest() {
 
   // Data source specific fields
   let backtestUrl = '/api/backtest-stream';
-  if (isMT5Mode) {
+  if (isOptionsMode) {
+    formData.append('ticker', document.getElementById('optionsTicker').value.trim().toUpperCase());
+    formData.append('date_from', document.getElementById('optionsDateFrom').value);
+    formData.append('date_to', document.getElementById('optionsDateTo').value);
+    backtestUrl = '/api/options/fetch';
+  } else if (isMT5Mode) {
     formData.append('symbol', document.getElementById('mt5Symbol').value.trim());
     formData.append('date_from', document.getElementById('mt5DateFrom').value);
     formData.append('date_to', document.getElementById('mt5DateTo').value);
@@ -1925,7 +2105,7 @@ async function runBacktest() {
 
   try {
     // Use regular fetch for both modes (SSE was unreliable)
-    const url = isMT5Mode ? backtestUrl : '/api/backtest';
+    const url = (isMT5Mode || isOptionsMode) ? backtestUrl : '/api/backtest';
     const resp = await fetch(url, { method: 'POST', body: formData, signal: window._backtestAbort.signal });
     const data = await resp.json();
 
@@ -2101,6 +2281,9 @@ function getProfileData() {
     mt5SMTSymbol: document.getElementById('mt5SMTSymbol').value,
     mt5DateFrom: document.getElementById('mt5DateFrom').value,
     mt5DateTo: document.getElementById('mt5DateTo').value,
+    optionsTicker: document.getElementById('optionsTicker').value,
+    optionsDateFrom: document.getElementById('optionsDateFrom').value,
+    optionsDateTo: document.getElementById('optionsDateTo').value,
     fundedEnabled: document.getElementById('fundedEnabled').checked,
     fundedTarget: document.getElementById('fundedTarget').value,
     fundedMaxDD: document.getElementById('fundedMaxDD').value,
@@ -2121,6 +2304,9 @@ function applyProfileData(data) {
   if (data.mt5SMTSymbol) document.getElementById('mt5SMTSymbol').value = data.mt5SMTSymbol;
   if (data.mt5DateFrom) document.getElementById('mt5DateFrom').value = data.mt5DateFrom;
   if (data.mt5DateTo) document.getElementById('mt5DateTo').value = data.mt5DateTo;
+  if (data.optionsTicker) document.getElementById('optionsTicker').value = data.optionsTicker;
+  if (data.optionsDateFrom) document.getElementById('optionsDateFrom').value = data.optionsDateFrom;
+  if (data.optionsDateTo) document.getElementById('optionsDateTo').value = data.optionsDateTo;
   if (data.fundedEnabled !== undefined) document.getElementById('fundedEnabled').checked = data.fundedEnabled;
   if (data.fundedTarget) document.getElementById('fundedTarget').value = data.fundedTarget;
   if (data.fundedMaxDD) document.getElementById('fundedMaxDD').value = data.fundedMaxDD;
@@ -2198,19 +2384,34 @@ renderProfiles();
 
 // ── Data Mode Toggle (CSV / MT5) ──
 let currentDataMode = 'csv';
+var optionsTickerList = [];
 function setDataMode(mode) {
   currentDataMode = mode;
   document.getElementById('dataCSVPanel').style.display = mode === 'csv' ? 'block' : 'none';
   document.getElementById('dataMT5Panel').style.display = mode === 'mt5' ? 'block' : 'none';
+  document.getElementById('dataOptionsPanel').style.display = mode === 'options' ? 'block' : 'none';
   document.getElementById('btnDataCSV').classList.toggle('active', mode === 'csv');
   document.getElementById('btnDataMT5').classList.toggle('active', mode === 'mt5');
+  document.getElementById('btnDataOptions').classList.toggle('active', mode === 'options');
+  // Hide SMT/correlation controls in options mode (no secondary symbol support)
+  var showSmt = mode !== 'options';
+  var el;
+  el = document.getElementById('smtFileDrop'); if (el) el.style.display = showSmt ? '' : 'none';
+  el = document.getElementById('addSymbolBtn'); if (el) el.style.display = showSmt ? '' : 'none';
+  el = document.getElementById('extraSymbols'); if (el) el.style.display = showSmt ? '' : 'none';
+  // Reset options status indicator when leaving options mode
+  if (mode !== 'options') {
+    el = document.getElementById('optionsStatus'); if (el) el.style.display = 'none';
+  }
   localStorage.setItem('_bt_dataMode', mode);
   if (mode === 'mt5') loadMT5Symbols();
+  if (mode === 'options' && optionsTickerList.length === 0) loadOptionsTickers();
 }
 // Restore saved mode
 (function() {
   const saved = localStorage.getItem('_bt_dataMode');
   if (saved === 'mt5') setDataMode('mt5');
+  else if (saved === 'options') setDataMode('options');
 })();
 
 // ── MT5 Status + Symbol Autocomplete ──
@@ -2583,9 +2784,85 @@ function modalPrompt(message, defaultValue, title) {
   return showModal({ title: title || 'Input', message: message, input: true, defaultValue: defaultValue || '' });
 }
 
+// ── Options Data: Ticker Search + Date Range ──
+function loadOptionsTickers() {
+  if (optionsTickerList.length > 0) return;
+  fetch('/api/options/tickers').then(function(r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function(data) {
+    if (data.error) { console.warn('Options unavailable:', data.error); return; }
+    if (data.tickers) optionsTickerList = data.tickers;
+  }).catch(function(err) {
+    console.error('Failed to load options tickers:', err);
+  });
+}
+
+(function() {
+  var tickerInput = document.getElementById('optionsTicker');
+  var dropdown = document.getElementById('optionsTickerDropdown');
+  if (!tickerInput || !dropdown) return;
+
+  tickerInput.addEventListener('input', function() {
+    var q = tickerInput.value.toUpperCase().trim();
+    if (!q) { dropdown.style.display = 'none'; return; }
+    var matches = optionsTickerList.filter(function(t) { return t.startsWith(q); }).slice(0, 15);
+    if (matches.length === 0) { dropdown.style.display = 'none'; return; }
+    dropdown.innerHTML = matches.map(function(t) {
+      return '<div style="padding:6px 12px;cursor:pointer;font-size:12px;color:#999;font-family:Courier New,monospace;" onmouseover="this.style.background=\'#1a1a1a\';this.style.color=\'#fff\'" onmouseout="this.style.background=\'none\';this.style.color=\'#999\'" onclick="selectOptionsTicker(\'' + t + '\')">' + t + '</div>';
+    }).join('');
+    dropdown.style.display = 'block';
+  });
+
+  tickerInput.addEventListener('blur', function() {
+    setTimeout(function() { dropdown.style.display = 'none'; }, 200);
+  });
+
+  tickerInput.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      dropdown.style.display = 'none';
+      var val = tickerInput.value.toUpperCase().trim();
+      if (val && optionsTickerList.indexOf(val) !== -1) selectOptionsTicker(val);
+    }
+    if (e.key === 'Escape') {
+      dropdown.style.display = 'none';
+    }
+  });
+})();
+
+function selectOptionsTicker(ticker) {
+  document.getElementById('optionsTicker').value = ticker;
+  document.getElementById('optionsTickerDropdown').style.display = 'none';
+  // Fetch date range
+  var statusEl = document.getElementById('optionsStatus');
+  var dotEl = document.getElementById('optionsStatusDot');
+  var textEl = document.getElementById('optionsStatusText');
+  statusEl.style.display = 'flex'; statusEl.style.alignItems = 'center'; statusEl.style.gap = '6px';
+  dotEl.style.color = 'var(--yellow)';
+  textEl.textContent = 'Fetching date range...';
+  textEl.style.color = 'var(--yellow)';
+
+  fetch('/api/options/date-range?ticker=' + encodeURIComponent(ticker))
+    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function(data) {
+      if (data.error) throw new Error(data.error);
+      document.getElementById('optionsDateFrom').value = data.earliest;
+      document.getElementById('optionsDateTo').value = data.latest;
+      dotEl.style.color = 'var(--green)';
+      textEl.style.color = 'var(--green)';
+      textEl.textContent = data.earliest + ' to ' + data.latest + ' (daily)';
+    })
+    .catch(function(err) {
+      dotEl.style.color = 'var(--red)';
+      textEl.style.color = 'var(--red)';
+      textEl.textContent = 'Error: ' + err.message;
+    });
+}
+
 function _initMT5() {
   checkMT5Status();
   if (currentDataMode === 'mt5') loadMT5Symbols();
+  if (currentDataMode === 'options') loadOptionsTickers();
   var today = new Date();
   var sixAgo = new Date(today);
   sixAgo.setMonth(sixAgo.getMonth() - 6);

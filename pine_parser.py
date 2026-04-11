@@ -1009,6 +1009,7 @@ class PineInterpreter:
             'strategy.losstrades': self.variables.get('_losstrades', 0),
             'strategy.closedtrades': self.variables.get('_closedtrades', 0),
             'strategy.initial_capital': self.variables.get('_equity', 10000) - self.variables.get('_netprofit', 0),
+            'options.available': self.variables.get('_options_available', False),
         }
         # strategy.opentrades.entry_price(0) is handled as a function call
         if name in constants: return constants[name]
@@ -1492,6 +1493,10 @@ class PineInterpreter:
             except Exception:
                 return 0
 
+        # ── Options chain functions ──
+        if name.startswith('options.'):
+            return self._options_call(name, args, kwargs)
+
         # Visual no-ops
         if name in ('plot', 'plotshape', 'plotchar', 'plotarrow', 'bgcolor',
                      'barcolor', 'hline', 'fill', 'label.new', 'label.delete',
@@ -1880,6 +1885,148 @@ class PineInterpreter:
             return NA
 
         return self.variables['_vwap_num'] / den
+
+
+    # ── Options chain query functions ────────────────────────────────────
+
+    def _get_options_for_bar(self):
+        """Get the options chain DataFrame for the current bar's date."""
+        date_key = self.variables.get('_options_date_key', '')
+        if not date_key:
+            return None
+        opts_by_date = self.variables.get('__options_by_date__', {})
+        return opts_by_date.get(date_key)
+
+    def _find_contract(self, chain, strike, opt_type, dte):
+        """Find the best-matching single contract: exact strike, nearest expiry to target DTE."""
+        import pandas as _pd
+        filtered = chain[(chain['type'] == opt_type) & (chain['strike'] == strike)]
+        if len(filtered) == 0:
+            # No exact strike match — find nearest strike
+            typed = chain[chain['type'] == opt_type]
+            if len(typed) == 0:
+                return None
+            typed = typed.copy()
+            typed['_sdist'] = (typed['strike'] - strike).abs()
+            filtered = typed.nsmallest(3, '_sdist')  # top 3 nearest strikes
+        bar_date = _pd.Timestamp(self.variables.get('_options_date_key', ''))
+        filtered = filtered.copy()
+        filtered['_dte'] = (_pd.to_datetime(filtered['expiration']) - bar_date).dt.days
+        filtered['_dte_dist'] = (filtered['_dte'] - dte).abs()
+        best = filtered.nsmallest(1, '_dte_dist')
+        return best.iloc[0] if len(best) > 0 else None
+
+    def _find_atm(self, chain, dte, opt_type='call'):
+        """Find the ATM contract closest to the underlying close at target DTE."""
+        import pandas as _pd
+        close_price = self.variables.get('close', 0)
+        if not close_price or is_na(close_price) or close_price <= 0:
+            # No valid close — use median strike as ATM proxy
+            close_price = chain['strike'].median()
+        typed = chain[chain['type'] == opt_type]
+        if len(typed) == 0:
+            return None
+        bar_date = _pd.Timestamp(self.variables.get('_options_date_key', ''))
+        typed = typed.copy()
+        typed['_dte'] = (_pd.to_datetime(typed['expiration']) - bar_date).dt.days
+        typed['_dte_dist'] = (typed['_dte'] - dte).abs()
+        # Find the expiry nearest to target DTE
+        min_dte_dist = typed['_dte_dist'].min()
+        at_expiry = typed[typed['_dte_dist'] == min_dte_dist]
+        # Among those, find strike nearest to underlying close
+        at_expiry = at_expiry.copy()
+        at_expiry['_strike_dist'] = (at_expiry['strike'] - close_price).abs()
+        best = at_expiry.nsmallest(1, '_strike_dist')
+        return best.iloc[0] if len(best) > 0 else None
+
+    def _options_call(self, name, args, kwargs):
+        """Dispatch for all options.* function calls."""
+        import pandas as _pd
+        chain = self._get_options_for_bar()
+        if chain is None or len(chain) == 0:
+            return NA
+
+        # ── Single-contract lookups: options.iv(strike, type, dte) ──
+        _single_fields = {
+            'options.iv': 'implied_volatility',
+            'options.delta': 'delta',
+            'options.gamma': 'gamma',
+            'options.theta': 'theta',
+            'options.vega': 'vega',
+            'options.rho': 'rho',
+            'options.mark': 'mark',
+            'options.bid': 'bid',
+            'options.ask': 'ask',
+            'options.last': 'last',
+            'options.volume': 'volume',
+            'options.oi': 'open_interest',
+        }
+        if name in _single_fields:
+            strike = float(args[0]) if len(args) > 0 and not is_na(args[0]) else self.variables.get('close', 0)
+            opt_type = str(args[1]) if len(args) > 1 else 'call'
+            dte = int(args[2]) if len(args) > 2 and not is_na(args[2]) else 30
+            contract = self._find_contract(chain, strike, opt_type, dte)
+            if contract is None:
+                return NA
+            val = contract.get(_single_fields[name])
+            return float(val) if _pd.notna(val) else NA
+
+        # ── ATM implied volatility: options.atm_iv(dte) ──
+        if name == 'options.atm_iv':
+            dte = int(args[0]) if args and not is_na(args[0]) else 30
+            atm = self._find_atm(chain, dte, 'call')
+            if atm is None:
+                return NA
+            val = atm.get('implied_volatility')
+            return float(val) if _pd.notna(val) else NA
+
+        # ── Put/call ratio: options.put_call_ratio() ──
+        if name == 'options.put_call_ratio':
+            put_oi = chain.loc[chain['type'] == 'put', 'open_interest'].sum()
+            call_oi = chain.loc[chain['type'] == 'call', 'open_interest'].sum()
+            return float(put_oi) / float(call_oi) if call_oi > 0 else NA
+
+        # ── Total OI: options.total_oi("call") ──
+        if name == 'options.total_oi':
+            opt_type = str(args[0]) if args else 'call'
+            return float(chain.loc[chain['type'] == opt_type, 'open_interest'].sum())
+
+        # ── Total volume: options.total_volume("call") ──
+        if name == 'options.total_volume':
+            opt_type = str(args[0]) if args else 'call'
+            return float(chain.loc[chain['type'] == opt_type, 'volume'].sum())
+
+        # ── IV skew: options.iv_skew(dte) — 25d put IV minus 25d call IV ──
+        if name == 'options.iv_skew':
+            dte = int(args[0]) if args and not is_na(args[0]) else 30
+            bar_date = _pd.Timestamp(self.variables.get('_options_date_key', ''))
+            # Find nearest expiry to target DTE for both puts and calls
+            typed_all = chain.copy()
+            typed_all['_dte'] = (_pd.to_datetime(typed_all['expiration']) - bar_date).dt.days
+            typed_all['_dte_dist'] = (typed_all['_dte'] - dte).abs()
+            min_dist = typed_all['_dte_dist'].min()
+            at_exp = typed_all[typed_all['_dte_dist'] == min_dist]
+            puts = at_exp[at_exp['type'] == 'put']
+            calls = at_exp[at_exp['type'] == 'call']
+            if len(puts) == 0 or len(calls) == 0:
+                return NA
+            # Find 25-delta put (delta around -0.25, so abs(delta) closest to 0.25)
+            puts = puts.copy()
+            puts['_d25'] = (puts['delta'].fillna(0).abs() - 0.25).abs()
+            p25 = puts.nsmallest(1, '_d25')
+            # Find 25-delta call (delta closest to 0.25)
+            calls = calls.copy()
+            calls['_d25'] = (calls['delta'].fillna(0) - 0.25).abs()
+            c25 = calls.nsmallest(1, '_d25')
+            if len(p25) == 0 or len(c25) == 0:
+                return NA
+            p_iv = p25.iloc[0].get('implied_volatility')
+            c_iv = c25.iloc[0].get('implied_volatility')
+            if _pd.isna(p_iv) or _pd.isna(c_iv):
+                return NA
+            return float(p_iv) - float(c_iv)
+
+        return NA
 
 
 def parse_pine(source: str) -> Program:
