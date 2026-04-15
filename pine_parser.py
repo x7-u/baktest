@@ -1010,6 +1010,10 @@ class PineInterpreter:
             'strategy.closedtrades': self.variables.get('_closedtrades', 0),
             'strategy.initial_capital': self.variables.get('_equity', 10000) - self.variables.get('_netprofit', 0),
             'options.available': self.variables.get('_options_available', False),
+            'dayofweek.sunday': 1, 'dayofweek.monday': 2, 'dayofweek.tuesday': 3,
+            'dayofweek.wednesday': 4, 'dayofweek.thursday': 5, 'dayofweek.friday': 6,
+            'dayofweek.saturday': 7,
+            'strategy.opentrades': self.variables.get('_opentrades', 0),
             'strategy.options_count': self.variables.get('_options_count', 0),
             'strategy.options_profit': self.variables.get('_options_profit', 0),
             'strategy.options_delta': self.variables.get('_options_delta', 0),
@@ -1596,6 +1600,69 @@ class PineInterpreter:
                 return t.minute
             except Exception:
                 return 0
+
+        if name == 'dayofmonth':
+            ts = args[0] if args else self.variables.get('time', 0)
+            if is_na(ts): return NA
+            try:
+                import datetime as _dt
+                broker_off = int(self.variables.get('__utc_offset__', 0))
+                tz_str = args[1] if len(args) > 1 else None
+                target_off = broker_off
+                if tz_str and isinstance(tz_str, str):
+                    if 'New_York' in tz_str: target_off = -5
+                    elif 'Chicago' in tz_str: target_off = -6
+                    elif 'London' in tz_str: target_off = 0
+                    elif 'Tokyo' in tz_str: target_off = 9
+                    elif 'Sydney' in tz_str: target_off = 11
+                adjusted_ts = int(ts) - broker_off * 3600 + target_off * 3600
+                t = _dt.datetime.utcfromtimestamp(adjusted_ts)
+                return t.day
+            except Exception:
+                return 1
+
+        if name == 'month':
+            ts = args[0] if args else self.variables.get('time', 0)
+            if is_na(ts): return NA
+            try:
+                import datetime as _dt
+                broker_off = int(self.variables.get('__utc_offset__', 0))
+                tz_str = args[1] if len(args) > 1 else None
+                target_off = broker_off
+                if tz_str and isinstance(tz_str, str):
+                    if 'New_York' in tz_str: target_off = -5
+                    elif 'Chicago' in tz_str: target_off = -6
+                    elif 'London' in tz_str: target_off = 0
+                    elif 'Tokyo' in tz_str: target_off = 9
+                    elif 'Sydney' in tz_str: target_off = 11
+                adjusted_ts = int(ts) - broker_off * 3600 + target_off * 3600
+                t = _dt.datetime.utcfromtimestamp(adjusted_ts)
+                return t.month
+            except Exception:
+                return 1
+
+        if name == 'dayofweek':
+            ts = args[0] if args else self.variables.get('time', 0)
+            if is_na(ts): return NA
+            try:
+                import datetime as _dt
+                broker_off = int(self.variables.get('__utc_offset__', 0))
+                tz_str = args[1] if len(args) > 1 else None
+                target_off = broker_off
+                if tz_str and isinstance(tz_str, str):
+                    if 'New_York' in tz_str: target_off = -5
+                    elif 'Chicago' in tz_str: target_off = -6
+                    elif 'London' in tz_str: target_off = 0
+                    elif 'Tokyo' in tz_str: target_off = 9
+                    elif 'Sydney' in tz_str: target_off = 11
+                adjusted_ts = int(ts) - broker_off * 3600 + target_off * 3600
+                t = _dt.datetime.utcfromtimestamp(adjusted_ts)
+                # Pine Script dayofweek: 1=Sunday, 2=Monday, ..., 7=Saturday
+                # Python isoweekday: 1=Monday, ..., 7=Sunday
+                py_dow = t.isoweekday()  # 1=Mon..7=Sun
+                return (py_dow % 7) + 1   # Convert: Mon=2, Tue=3, ..., Sun=1
+            except Exception:
+                return 1
 
         # ── Options chain functions ──
         if name.startswith('options.'):

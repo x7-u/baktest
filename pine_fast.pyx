@@ -688,6 +688,14 @@ cdef class FastPineInterpreter:
         if name == 'strategy.options_profit': return self.variables.get('_options_profit', 0)
         if name == 'strategy.options_delta': return self.variables.get('_options_delta', 0)
         if name == 'strategy.options_theta': return self.variables.get('_options_theta', 0)
+        if name == 'strategy.opentrades': return self.variables.get('_opentrades', 0)
+        if name == 'dayofweek.sunday': return 1
+        if name == 'dayofweek.monday': return 2
+        if name == 'dayofweek.tuesday': return 3
+        if name == 'dayofweek.wednesday': return 4
+        if name == 'dayofweek.thursday': return 5
+        if name == 'dayofweek.friday': return 6
+        if name == 'dayofweek.saturday': return 7
         if name == 'math.pi': return M_PI
         if name == 'math.e': return 2.718281828459045
         if name == 'barstate.islast':
@@ -779,6 +787,7 @@ cdef class FastPineInterpreter:
                      'options.ask', 'options.last', 'options.volume', 'options.oi',
                      'options.atm_iv', 'options.put_call_ratio', 'options.total_oi',
                      'options.total_volume', 'options.iv_skew',
+                     'dayofmonth', 'month', 'dayofweek',
                      'strategy.entry_option', 'strategy.close_option', 'strategy.close_all_options',
                      'strategy.entry_spread', 'strategy.entry_condor',
                      'strategy.entry_straddle', 'strategy.entry_strangle') or name.startswith('options.'):

@@ -938,6 +938,7 @@ class Backtester:
 
             # ── Update options portfolio variables ──
             interpreter.variables['_options_count'] = len(self.open_options)
+            interpreter.variables['_opentrades'] = len(self.open_positions) + len(self.open_options)
             interpreter.variables['_options_profit'] = options_unrealized
             net_delta = 0.0; net_theta = 0.0
             for opt in self.open_options.values():
